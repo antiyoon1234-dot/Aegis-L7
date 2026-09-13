@@ -1,0 +1,117 @@
+# ═══════════════════════════════════════════
+#  L7 Defense Plugin — Configuration
+# ═══════════════════════════════════════════
+
+# 접속 빈도 제한 (Rate Limiting)
+rate-limit:
+  max-connections: 5
+  window-seconds: 30
+
+# 핑/MOTD 플러드 방어
+ping-flood:
+  max-pings: 15
+  window-seconds: 10
+
+# IP 차단 설정
+blocking:
+  duration-minutes: 10
+  max-cache-size: 50000
+
+# 공격 감지 설정
+attack-detection:
+  threshold: 10
+  denial-threshold: 50
+  evaluation-interval-seconds: 30
+  window-seconds: 60
+
+# 봇 닉네임 필터
+bot-filter:
+  enabled: true
+  suspicious-threshold: 3
+
+# ─── v1.3 고급 휴리스틱 및 방어 기능 ───
+
+advanced-heuristics:
+  # 1. 핑 사전 검증 (Ping-before-Join)
+  # 진짜 플레이어는 서버 목록에서 핑을 보낸 뒤 접속합니다. 핑 기록이 없으면 소프트 캡챠로 보냅니다.
+  ping-before-join:
+    enabled: true
+    # true: 공격 중일 때만 검사, false: 항상 검사
+    only-under-attack: true
+
+  # 2. 재접속 검증 (Soft Captcha)
+  # 의심스러운 IP를 즉시 차단하지 않고 킥한 뒤, 지정된 시간 안에 다시 접속하면 통과시킵니다.
+  rejoin-verification:
+    enabled: true
+    min-delay-seconds: 3   # 킥 후 최소 3초는 기다려야 함 (단순 봇 스크립트 차단)
+    max-delay-seconds: 15  # 15초 내에 다시 들어와야 인증 성공
+
+  # 3. 호스트네임 검증
+  # 플레이어가 접속할 때 사용한 도메인/IP를 검사합니다.
+  hostname-validation:
+    enabled: true
+    # 숫자 IP(예: 123.45.67.89:25565)로 직접 접속하는 경우 차단 (봇넷 포트 스캔 방어)
+    block-numeric-ip: true
+    # 허용할 도메인 목록 (비워두면 도메인 형식인지 확인만 함)
+    # allowed-domains: ["play.myserver.com"]
+    allowed-domains: []
+
+# 4. VPN / 프록시 / 데이터센터 차단 (v1.4 GeoIP 연동)
+anti-vpn:
+  enabled: true
+  only-under-attack: true
+
+# 5. 국가 기반 화이트리스트 락다운 (v1.4 GeoIP)
+# 공격 시 지정된 국가 외의 모든 해외 IP 접속을 차단합니다.
+geoip:
+  block-foreign-under-attack: false
+  # 허용할 국가 코드 (예: KR, US, JP)
+  allowed-countries: ["KR"]
+
+# 6. 인게임 패킷 플러드 방어 (v1.4 Server Crusher 방어)
+# 캡챠를 뚫고 들어와 인벤토리나 아이템 상호작용 패킷을 초당 수백 번 보내 서버 틱을 깎는 크러셔 방어
+post-login:
+  packet-spam-filter:
+    enabled: true
+    # 1초에 발생할 수 있는 최대 상호작용 횟수
+    max-actions-per-sec: 40
+
+# 7. OS 방화벽 연동 (리눅스 전용)
+# Java/Netty 부하를 줄이기 위해 OS 명령어(iptables)를 직접 실행해 커널에서 차단합니다.
+# 주의: 서버를 구동하는 유저에게 sudo 권한이나 iptables 실행 권한이 필요합니다.
+firewall:
+  enabled: false
+  # {ip} 부분은 실제 차단될 IP로 치환됩니다.
+  command-block: "sudo iptables -A INPUT -s {ip} -j DROP"
+  command-unblock: "sudo iptables -D INPUT -s {ip} -j DROP"
+
+# 8. 대형 네트워크 전용 방어 모듈 (v1.5 Endgame)
+endgame-features:
+  # 클라이언트 핑거프린팅: 접속 후 minecraft:brand 패킷이 너무 빨리 오면(봇 스크립트) 킥
+  brand-fingerprinting:
+    enabled: true
+  
+  # 행동 분석: 기계적인 완벽한 직선/스냅 에임 뷰 꺾기 차단 (Baritone 등)
+  movement-heuristics:
+    enabled: true
+
+  # Redis 글로벌 밴 동기화 (BungeeCord 등 멀티 서버 환경용)
+  redis-sync:
+    enabled: false
+    host: "127.0.0.1"
+    port: 6379
+    password: ""
+
+# ─── 알림 및 예외 처리 ───
+
+alert:
+  interval-seconds: 5
+
+whitelist:
+  name-bypass-all: true
+  players:
+    # - "Player123"
+  ips:
+    # - "127.0.0.1"
+proxy:
+  enabled: false

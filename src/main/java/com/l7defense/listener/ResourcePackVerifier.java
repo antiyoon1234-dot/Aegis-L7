@@ -38,7 +38,7 @@ public final class ResourcePackVerifier implements Listener {
     // 혹은 byte array 20자리 빈 공간
     private static final byte[] DUMMY_HASH = new byte[20]; // 0으로 채워진 해시 (Spigot 스펙)
 
-    public ResourcePackVerifier(Plugin plugin, SecurityManager securityManager, boolean enabled) {(Plugin plugin, SecurityManager securityManager, boolean enabled) {
+    public ResourcePackVerifier(Plugin plugin, SecurityManager securityManager, boolean enabled) {
         this.plugin = plugin;
         this.securityManager = securityManager;
         this.enabled = enabled;

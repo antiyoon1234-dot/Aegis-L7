@@ -152,5 +152,4 @@ public final class CaptchaListener implements Listener {
             event.getPlayer().sendMessage(Component.text("캡챠 인증을 먼저 완료해주세요.", NamedTextColor.RED));
         }
     }
-    }
 }
