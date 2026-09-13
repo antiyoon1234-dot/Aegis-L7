@@ -8,7 +8,7 @@
 [![Redis](https://img.shields.io/badge/Sync-Redis-dc382d.svg?style=flat-square)](#)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](#)
 
-Aegis-L7은 Paper 서버를 겨냥한 **지능형 L7 DDoS 공격, 대규모 봇넷(Botnet), 그리고 악성 크래시 클라이언트(NBT 폭탄, 패킷 스팸)**를 완벽하게 차단하기 위해 개발된 엔드게임(End-Game) 급 보안 플러그인입니다.
+Aegis-L7은 Paper 서버를 겨냥한 **지능형 L7 DDoS 공격, 대규모 봇넷(Botnet), 그리고 악성 크래시 클라이언트(NBT 폭탄, 패킷 스팸)**를 완벽하게 차단하기 위해 개발된 보안 플러그인입니다.
 
 메모리 누수 없는 가상 맵 캡챠, AI 채팅 필터링, 그리고 움직임 휴리스틱 분석 기능을 제공하며, 완벽한 스레드 안전성(Thread-Safe)**을 보장합니다.
 
