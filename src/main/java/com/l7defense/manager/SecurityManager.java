@@ -73,6 +73,14 @@ public class SecurityManager {
         PASSED, WAITING, EXPIRED, NEW
     }
 
+    private java.util.function.Consumer<org.bukkit.entity.Player> guiCaptchaTrigger;
+    private java.util.function.Consumer<org.bukkit.entity.Player> entityCaptchaTrigger;
+    private java.util.function.Consumer<org.bukkit.entity.Player> mapCaptchaTrigger;
+
+    public void setGuiCaptchaTrigger(java.util.function.Consumer<org.bukkit.entity.Player> trigger) { this.guiCaptchaTrigger = trigger; }
+    public void setEntityCaptchaTrigger(java.util.function.Consumer<org.bukkit.entity.Player> trigger) { this.entityCaptchaTrigger = trigger; }
+    public void setMapCaptchaTrigger(java.util.function.Consumer<org.bukkit.entity.Player> trigger) { this.mapCaptchaTrigger = trigger; }
+
     public SecurityManager(int maxConnections, int connectionWindowSec,
                            int maxPings, int pingWindowSec,
                            int blockDurationMin, int maxCacheSize,
