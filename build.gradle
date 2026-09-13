@@ -1,0 +1,42 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.l7defense'
+version = '1.0.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'papermc'
+        url = 'https://repo.papermc.io/repository/maven-public/'
+    }
+}
+
+dependencies {
+    // Paper API 1.20.4 — Adventure API 내장
+    compileOnly 'io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT'
+
+    // Caffeine Cache — Paper 서버 런타임에 내장되어 있으나
+    // paper-api JAR에는 포함되지 않으므로 컴파일 시점에만 참조
+    compileOnly 'com.github.ben-manes.caffeine:caffeine:3.1.8'
+
+    compileOnly 'redis.clients:jedis:5.1.0'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
+
+// 빌드 시 플러그인 JAR 생성
+jar {
+    archiveBaseName = 'L7DefensePlugin'
+    archiveVersion = version
+}
