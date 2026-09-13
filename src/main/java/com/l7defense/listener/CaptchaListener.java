@@ -141,10 +141,16 @@ public final class CaptchaListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
-    public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
+        public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
         String ip = IpUtils.getIp(event.getPlayer());
         if (isAnyCaptchaPending(ip)) {
+            // 관리자 명령어 예외 처리
+            if (event.getMessage().toLowerCase().startsWith("/l7def")) {
+                return; // 허용
+            }
             event.setCancelled(true);
+            event.getPlayer().sendMessage(Component.text("캡챠 인증을 먼저 완료해주세요.", NamedTextColor.RED));
         }
+    }
     }
 }

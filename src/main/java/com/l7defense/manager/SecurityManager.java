@@ -412,6 +412,29 @@ public class SecurityManager {
     public int getConnectionWindowSeconds() { return connectionWindowSeconds; }
     public int getMaxPingsPerWindow() { return maxPingsPerWindow; }
     public int getPingWindowSeconds() { return pingWindowSeconds; }
+        public void scheduleCaptchaTimeout(org.bukkit.entity.Player player, String ip, com.l7defense.module.DefenseModule module) {
+        org.bukkit.plugin.Plugin plugin = org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(getClass());
+        org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (player != null && player.isOnline()) {
+                boolean stillPending = false;
+                switch (module) {
+                    case GUI_CAPTCHA -> stillPending = needsGuiCaptcha(ip);
+                    case ENTITY_CAPTCHA -> stillPending = needsEntityCaptcha(ip);
+                    case MAP_CAPTCHA -> stillPending = needsMapCaptcha(ip);
+                    case RP_CAPTCHA -> stillPending = needsResourcePackCaptcha(ip);
+                }
+                
+                if (stillPending) {
+                    // 강제 밴 처리
+                    String banReason = "캡챠 30초 타임아웃 미인증";
+                    org.bukkit.Bukkit.getLogger().warning("[L7 Defense] " + player.getName() + " 캡챠 30초 미인증 밴 처리됨.");
+                    getModuleManager().setPenalty(module, com.l7defense.module.PenaltyAction.BAN);
+                    handleViolation(player, module, banReason);
+                }
+            }
+        }, 30L * 20L); // 30초 후 확인
+    }
+
     public int getBlockDurationMinutes() { return blockDurationMinutes; }
 
     public void simulateTest(org.bukkit.entity.Player player, com.l7defense.module.DefenseModule module) {
@@ -441,13 +464,13 @@ public class SecurityManager {
                     flagForGuiCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] GUI 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
                     org.bukkit.Bukkit.getLogger().info("[L7-Debug] guiCaptchaTrigger is " + (guiCaptchaTrigger != null ? "READY" : "NULL"));
-                    if (guiCaptchaTrigger != null) guiCaptchaTrigger.accept(player);
+                    if (guiCaptchaTrigger != null) { guiCaptchaTrigger.accept(player); scheduleCaptchaTimeout(player, ip, module); }
                 }
                 case ENTITY_CAPTCHA -> {
                     flagForEntityCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] 3D Entity 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
                     org.bukkit.Bukkit.getLogger().info("[L7-Debug] entityCaptchaTrigger is " + (entityCaptchaTrigger != null ? "READY" : "NULL"));
-                    if (entityCaptchaTrigger != null) entityCaptchaTrigger.accept(player);
+                    if (entityCaptchaTrigger != null) { entityCaptchaTrigger.accept(player); scheduleCaptchaTimeout(player, ip, module); }
                 }
                 case RP_CAPTCHA -> {
                     flagForResourcePackCaptcha(ip);
@@ -457,7 +480,7 @@ public class SecurityManager {
                     flagForMapCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] Map OCR 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
                     org.bukkit.Bukkit.getLogger().info("[L7-Debug] mapCaptchaTrigger is " + (mapCaptchaTrigger != null ? "READY" : "NULL"));
-                    if (mapCaptchaTrigger != null) mapCaptchaTrigger.accept(player);
+                    if (mapCaptchaTrigger != null) { mapCaptchaTrigger.accept(player); scheduleCaptchaTimeout(player, ip, module); }
                 }
                 default -> {
                     if (penalty == com.l7defense.module.PenaltyAction.KICK) {
