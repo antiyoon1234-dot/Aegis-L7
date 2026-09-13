@@ -1,4 +1,5 @@
 package com.l7defense.listener;
+import com.l7defense.util.IpUtils;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -42,7 +43,7 @@ public final class ChatAiListener implements Listener {
 
         Player player = event.getPlayer();
         String message = event.getMessage();
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
 
         // 1. 악성 렌더링 크래시 방어 (RTL Override 특수문자 차단)
         // \u202E, \u202D 등은 마인크래프트 채팅창 렌더링을 터뜨리거나 반전시킵니다.

@@ -1,4 +1,5 @@
 package com.l7defense.listener;
+import com.l7defense.util.IpUtils;
 
 import com.l7defense.manager.SecurityManager;
 import com.l7defense.module.DefenseModule;
@@ -73,7 +74,7 @@ public final class MapCaptchaListener implements Listener {
         if (!securityManager.getModuleManager().isEnabled(DefenseModule.MAP_CAPTCHA)) return;
 
         Player player = event.getPlayer();
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
 
         // 캡챠 대상으로 지정된 경우
         if (securityManager.needsMapCaptcha(ip)) {
@@ -119,7 +120,7 @@ public final class MapCaptchaListener implements Listener {
                 // 성공
                 activeCaptchas.remove(player.getUniqueId());
                 player.getInventory().setItemInMainHand(new ItemStack(Material.AIR));
-                String ip = player.getAddress().getAddress().getHostAddress();
+                String ip = IpUtils.getIp(player);
                 securityManager.passMapCaptcha(ip);
                 player.sendMessage(Component.text("검증 성공! 정상적으로 플레이가 가능합니다.", NamedTextColor.GREEN));
             } else {

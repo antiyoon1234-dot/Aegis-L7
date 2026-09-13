@@ -76,18 +76,21 @@ public final class GeoIpManager {
     }
 
     private GeoData fetchGeoData(String ip) {
+        HttpURLConnection conn = null;
         try {
             URL url = new URL(String.format(API_URL, ip));
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(800);
             conn.setReadTimeout(800);
             conn.setRequestProperty("User-Agent", "L7DefensePlugin/1.4");
-
-            if (conn.getResponseCode() != 200) return new GeoData(false, "XX", true);
-
-            try (InputStream in = conn.getInputStream();
-                 Scanner scanner = new Scanner(in)) {
+            
+            if (conn.getResponseCode() != 200) {
+                return new GeoData(false, "XX", true);
+            }
+            
+            try (java.io.InputStream in = conn.getInputStream();
+                 java.util.Scanner scanner = new java.util.Scanner(in)) {
                 String response = scanner.useDelimiter("\\A").next();
                 
                 boolean isProxy = response.contains("\"proxy\":true");
@@ -95,14 +98,18 @@ public final class GeoIpManager {
                 
                 String country = "XX";
                 int idx = response.indexOf("\"countryCode\":\"");
-                if (idx != -1) {
+                if (idx != -1 && idx + 17 <= response.length()) {
                     country = response.substring(idx + 15, idx + 17);
                 }
-
+                
                 return new GeoData(isProxy || isHosting, country, false);
             }
         } catch (Exception e) {
             return new GeoData(false, "XX", true);
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 }

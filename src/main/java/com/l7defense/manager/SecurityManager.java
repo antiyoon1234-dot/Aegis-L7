@@ -133,7 +133,7 @@ public class SecurityManager {
         if (!moduleManager.isEnabled(module)) return;
         
         com.l7defense.module.PenaltyAction action = moduleManager.getPenalty(module);
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
         
         if (action == com.l7defense.module.PenaltyAction.BAN) {
             blockIp(ip, reason);

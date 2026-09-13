@@ -1,4 +1,5 @@
 package com.l7defense.listener;
+import com.l7defense.util.IpUtils;
 
 import com.l7defense.manager.SecurityManager;
 import net.kyori.adventure.text.Component;
@@ -40,7 +41,7 @@ public final class CaptchaListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
 
         // SecurityManager에서 이 IP/유저가 GUI 캡챠 대상인지 확인
         if (securityManager.needsGuiCaptcha(ip)) {
@@ -80,7 +81,7 @@ public final class CaptchaListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
 
         if (securityManager.needsGuiCaptcha(ip)) {
             event.setCancelled(true); // 아이템 이동 방지
@@ -103,7 +104,7 @@ public final class CaptchaListener implements Listener {
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
         Player player = (Player) event.getPlayer();
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
         if (securityManager.needsGuiCaptcha(ip)) {
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 if (player.isOnline() && securityManager.needsGuiCaptcha(ip)) {
@@ -122,7 +123,7 @@ public final class CaptchaListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPlayerMove(PlayerMoveEvent event) {
-        String ip = event.getPlayer().getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(event.getPlayer());
         if (isAnyCaptchaPending(ip)) {
             if (event.getFrom().getX() != event.getTo().getX() || event.getFrom().getZ() != event.getTo().getZ()) {
                 event.setCancelled(true);
@@ -132,7 +133,7 @@ public final class CaptchaListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPlayerChat(AsyncPlayerChatEvent event) {
-        String ip = event.getPlayer().getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(event.getPlayer());
         if (isAnyCaptchaPending(ip)) {
             event.setCancelled(true);
             event.getPlayer().sendMessage(Component.text("인증을 먼저 완료해주세요.", NamedTextColor.RED));
@@ -141,7 +142,7 @@ public final class CaptchaListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
-        String ip = event.getPlayer().getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(event.getPlayer());
         if (isAnyCaptchaPending(ip)) {
             event.setCancelled(true);
         }

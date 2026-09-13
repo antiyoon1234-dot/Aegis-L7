@@ -35,9 +35,10 @@ public final class VpnChecker {
     public boolean isVpnOrHosting(String ip) {
         if (!enabled) return false;
 
+        HttpURLConnection conn = null;
         try {
             URL url = new URL(String.format(API_URL, ip));
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(800); // 0.8초 타임아웃
             conn.setReadTimeout(800);

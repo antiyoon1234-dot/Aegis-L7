@@ -1,4 +1,5 @@
 package com.l7defense.listener;
+import com.l7defense.util.IpUtils;
 
 import com.l7defense.manager.SecurityManager;
 import net.kyori.adventure.text.Component;
@@ -48,7 +49,7 @@ public final class EntityCaptchaListener implements Listener {
         if (!enabled) return;
         
         Player player = event.getPlayer();
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
 
         // SecurityManager가 3D 캡챠를 지시했거나 공격 상태일 때 랜덤 샘플링
         if (securityManager.needsEntityCaptcha(ip)) {
@@ -80,7 +81,7 @@ public final class EntityCaptchaListener implements Listener {
                 }
                 
                 if (player.isOnline()) {
-                    String ip = player.getAddress().getAddress().getHostAddress();
+                    String ip = IpUtils.getIp(player);
                     securityManager.blockIp(ip, "3D 캡챠 타임아웃");
                     player.kick(Component.text("캡챠 인증 시간 초과. 다시 접속해주세요.", NamedTextColor.RED));
                 }
@@ -99,7 +100,7 @@ public final class EntityCaptchaListener implements Listener {
             if (targetId != null && event.getEntity().getUniqueId().equals(targetId)) {
                 event.setCancelled(true);
                 
-                String ip = player.getAddress().getAddress().getHostAddress();
+                String ip = IpUtils.getIp(player);
                 securityManager.passEntityCaptcha(ip);
                 
                 player.sendMessage(Component.text("봇 방지 시스템을 통과했습니다!", NamedTextColor.GREEN));

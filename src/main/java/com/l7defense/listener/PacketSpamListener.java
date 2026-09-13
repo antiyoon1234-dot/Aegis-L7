@@ -1,4 +1,5 @@
 package com.l7defense.listener;
+import com.l7defense.util.IpUtils;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -44,7 +45,7 @@ public final class PacketSpamListener implements Listener {
     private boolean checkSpam(Player player) {
         if (!enabled || player.hasPermission("l7defense.admin")) return false;
 
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
         AtomicInteger count = actionCache.get(ip, k -> new AtomicInteger(0));
         
         if (count.incrementAndGet() > maxActionsPerSecond) {

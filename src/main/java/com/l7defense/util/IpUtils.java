@@ -57,4 +57,16 @@ public final class IpUtils {
                 .map(IpUtils::normalize)
                 .collect(Collectors.toSet());
     }
+
+    /** Player에서 null-safe IP 추출 */
+    public static String getIp(org.bukkit.entity.Player player) {
+        if (player == null || player.getAddress() == null) return "unknown";
+        return normalize(player.getAddress().getAddress().getHostAddress());
+    }
+
+    /** InetSocketAddress에서 null-safe IP 추출 */
+    public static String getIp(java.net.InetSocketAddress address) {
+        if (address == null || address.getAddress() == null) return "unknown";
+        return normalize(address.getAddress().getHostAddress());
+    }
 }

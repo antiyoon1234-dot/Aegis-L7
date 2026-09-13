@@ -1,4 +1,5 @@
 package com.l7defense.listener;
+import com.l7defense.util.IpUtils;
 
 import com.l7defense.manager.SecurityManager;
 import net.kyori.adventure.text.Component;
@@ -46,7 +47,7 @@ public final class ResourcePackVerifier implements Listener {
         if (!enabled) return;
         
         Player player = event.getPlayer();
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
 
         // SecurityManager가 이 IP에 대해 리소스팩 캡챠를 지시한 경우
         if (securityManager.needsResourcePackCaptcha(ip)) {
@@ -74,20 +75,17 @@ public final class ResourcePackVerifier implements Listener {
         UUID uuid = player.getUniqueId();
         
         if (pendingVerifications.containsKey(uuid)) {
-            Integer taskId = pendingVerifications.remove(uuid);
-            if (taskId != null) Bukkit.getScheduler().cancelTask(taskId);
-
-            String ip = player.getAddress().getAddress().getHostAddress();
+            Integer taskId = pendingVerifications.get(uuid); String ip = IpUtils.getIp(player);
 
             switch (event.getStatus()) {
                 case SUCCESSFULLY_LOADED:
-                    // 봇 검증 완벽 통과
+                    if (taskId != null) Bukkit.getScheduler().cancelTask(taskId); pendingVerifications.remove(uuid); // 봇 검증 완벽 통과
                     securityManager.passResourcePackCaptcha(ip);
                     player.sendMessage(Component.text("봇 방지 시스템을 통과했습니다!", NamedTextColor.GREEN));
                     break;
                 case DECLINED:
                 case FAILED_DOWNLOAD:
-                    // 봇이거나 거부한 유저 차단
+                    if (taskId != null) Bukkit.getScheduler().cancelTask(taskId); pendingVerifications.remove(uuid); // 봇이거나 거부한 유저 차단
                     securityManager.blockIp(ip, "리소스팩 캡챠 거부/실패");
                     player.kick(Component.text("서버 접속을 위해 리소스팩 수락이 필수입니다.", NamedTextColor.RED));
                     break;
@@ -95,8 +93,7 @@ public final class ResourcePackVerifier implements Listener {
                     // 수락은 했으나 아직 다운로드/적용 중. 타이머는 계속 돌아가야 하므로 다시 대기 상태로 넣진 않음.
                     // 위 taskId 취소 로직을 약간 우회해야 함: ACCEPTED일 때는 타이머를 끄지 않게 설계해야 함.
                     // 구현 수정: ACCEPTED 시에는 맵에 다시 넣습니다.
-                    pendingVerifications.put(uuid, taskId);
-                    break;
+                    // ACCEPTED는 아무것도 취소/제거하지 않고 넘어갑니다.`n                    break;
             }
         }
     }

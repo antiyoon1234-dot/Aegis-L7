@@ -1,4 +1,5 @@
 package com.l7defense.listener;
+import com.l7defense.util.IpUtils;
 
 import com.l7defense.manager.SecurityManager;
 import net.kyori.adventure.text.Component;
@@ -60,7 +61,7 @@ public final class MovementHeuristicsListener implements Listener {
     }
 
     private void flagBot(Player player, String reason) {
-        String ip = player.getAddress().getAddress().getHostAddress();
+        String ip = IpUtils.getIp(player);
         securityManager.blockIp(ip, reason);
         player.kick(Component.text("비정상적인 움직임이 감지되었습니다.", NamedTextColor.RED));
     }

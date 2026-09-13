@@ -110,7 +110,7 @@ public final class L7DefensePlugin extends JavaPlugin {
         String rPass = config.getString("endgame-features.redis-sync.password", "");
 
         // v1.6 모듈 매니저 및 명령어
-        com.l7defense.module.ModuleConfigManager moduleManager = new com.l7defense.module.ModuleConfigManager(this);
+        this.moduleManager = new com.l7defense.module.ModuleConfigManager(this); com.l7defense.module.ModuleConfigManager moduleManager = this.moduleManager;
         
         boolean fwEn = config.getBoolean("firewall.enabled", false);
         String fwBlock = config.getString("firewall.command-block", "");
@@ -189,19 +189,20 @@ public final class L7DefensePlugin extends JavaPlugin {
         com.l7defense.listener.ClientModDetectorListener wdlListener = new com.l7defense.listener.ClientModDetectorListener(securityManager);
         pm.registerEvents(new com.l7defense.listener.BlockCrasherListener(securityManager), this);
 
-        // 페이로드 및 모드 통신 채널 등록
-        getServer().getMessenger().registerIncomingPluginChannel(this, "MC|CustomPayload", crasherListener);
-        getServer().getMessenger().registerIncomingPluginChannel(this, "minecraft:custom_payload", crasherListener);
-        
-        // WDL(월드 다운로더) 채널 등록
-        getServer().getMessenger().registerIncomingPluginChannel(this, "WDL|INIT", wdlListener);
-        getServer().getMessenger().registerIncomingPluginChannel(this, "WDL|CONTROL", wdlListener);
-        getServer().getMessenger().registerIncomingPluginChannel(this, "wdl:init", wdlListener);
-        getServer().getMessenger().registerIncomingPluginChannel(this, "wdl:control", wdlListener);
-        getServer().getMessenger().registerIncomingPluginChannel(this, "worlddownloader:init", wdlListener);
+        // 패킷 크래셔 페이로드 채널
+        try { getServer().getMessenger().registerIncomingPluginChannel(this, "minecraft:custom_payload", crasherListener); } catch (Exception ignored) {}
         
         // v1.5 플러그인 채널 (Brand Timing)
         com.l7defense.listener.BrandTimingListener brandListener = new com.l7defense.listener.BrandTimingListener(this, securityManager, brandEn);
+        try { getServer().getMessenger().registerIncomingPluginChannel(this, "minecraft:brand", brandListener); } catch (Exception ignored) {}
+
+        // 1.13+ 네임스페이스 형식으로 채널 등록 (legacy WDL|INIT 대신 wdl:init 등 사용)
+        try {
+            getServer().getMessenger().registerIncomingPluginChannel(this, "wdl:init", wdlListener);
+            getServer().getMessenger().registerIncomingPluginChannel(this, "wdl:control", wdlListener);
+            getServer().getMessenger().registerIncomingPluginChannel(this, "worlddownloader:init", wdlListener);
+        } catch (Exception ignored) {}
+        
         pm.registerEvents(new org.bukkit.event.Listener() {
             @org.bukkit.event.EventHandler(priority = org.bukkit.event.EventPriority.MONITOR)
             public void onJoin(org.bukkit.event.player.PlayerJoinEvent e) { brandListener.recordJoin(e.getPlayer()); }

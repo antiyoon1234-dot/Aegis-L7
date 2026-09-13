@@ -56,7 +56,7 @@ public final class PingFloodListener implements Listener {
             return;
         }
 
-        String ip = IpUtils.normalize(clientAddress.getAddress().getHostAddress());
+        String ip = IpUtils.normalize(IpUtils.getIp(clientAddress));
 
         // 화이트리스트 IP는 검사 건너뜀
         if (whitelistedIps.contains(ip)) {

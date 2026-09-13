@@ -64,6 +64,21 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        if (args[0].equalsIgnoreCase("unban") || args[0].equalsIgnoreCase("unblock") || args[0].equalsIgnoreCase("reset")) {
+            if (args.length < 2) {
+                sender.sendMessage("§c사용법: /l7def unban <IP>");
+                return true;
+            }
+            String targetIp = args[1];
+            boolean wasBlocked = securityManager.unblockIp(targetIp);
+            if (wasBlocked) {
+                sender.sendMessage("§a[L7] 성공적으로 IP(" + targetIp + ")의 차단(블랙리스트)을 해제했습니다!");
+            } else {
+                sender.sendMessage("§e[L7] 해당 IP(" + targetIp + ")는 현재 차단 목록에 없지만, 관련된 모든 검증 캐시를 완전히 초기화했습니다.");
+            }
+            return true;
+        }
+
         if (args[0].equalsIgnoreCase("modules")) {
             sender.sendMessage("§b[L7 방어 시스템 모듈 목록 (v1.6)]");
             ModuleConfigManager configManager = securityManager.getModuleManager();
