@@ -425,27 +425,20 @@ public class SecurityManager {
 
         org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
             switch (module) {
-                case GUI_CAPTCHA -> {
+                                case GUI_CAPTCHA -> {
                     flagForGuiCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] GUI 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
-                    com.l7defense.listener.CaptchaListener listener = org.bukkit.event.HandlerList.getRegisteredListeners(plugin).stream().map(rl -> rl.getListener()).filter(l -> l instanceof com.l7defense.listener.CaptchaListener).map(l -> (com.l7defense.listener.CaptchaListener) l).findFirst().orElse(null);
-                    if (listener != null) listener.openCaptcha(player);
+                    if (guiCaptchaTrigger != null) guiCaptchaTrigger.accept(player);
                 }
                 case ENTITY_CAPTCHA -> {
                     flagForEntityCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] 3D Entity 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
-                    com.l7defense.listener.EntityCaptchaListener listener = org.bukkit.event.HandlerList.getRegisteredListeners(plugin).stream().map(rl -> rl.getListener()).filter(l -> l instanceof com.l7defense.listener.EntityCaptchaListener).map(l -> (com.l7defense.listener.EntityCaptchaListener) l).findFirst().orElse(null);
-                    if (listener != null) listener.spawnCaptchaEntity(player);
-                }
-                case RP_CAPTCHA -> {
-                    flagForResourcePackCaptcha(ip);
-                    player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] 리소스팩 캡챠 발동! (리소스팩 적용은 클라이언트 접속 시에만 가능하여 재접속이 필요합니다.)", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
+                    if (entityCaptchaTrigger != null) entityCaptchaTrigger.accept(player);
                 }
                 case MAP_CAPTCHA -> {
                     flagForMapCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] Map OCR 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
-                    com.l7defense.listener.MapCaptchaListener listener = org.bukkit.event.HandlerList.getRegisteredListeners(plugin).stream().map(rl -> rl.getListener()).filter(l -> l instanceof com.l7defense.listener.MapCaptchaListener).map(l -> (com.l7defense.listener.MapCaptchaListener) l).findFirst().orElse(null);
-                    if (listener != null) listener.triggerMapCaptcha(player);
+                    if (mapCaptchaTrigger != null) mapCaptchaTrigger.accept(player);
                 }
                 default -> {
                     if (penalty == com.l7defense.module.PenaltyAction.KICK) {

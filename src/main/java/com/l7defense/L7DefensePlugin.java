@@ -171,13 +171,21 @@ public final class L7DefensePlugin extends JavaPlugin {
         pm.registerEvents(new PingFloodListener(securityManager, logger, wIps), this);
         
         // v1.4 & v1.5 & v1.6 & v1.7 캡챠 및 방어 리스너
-        pm.registerEvents(new com.l7defense.listener.CaptchaListener(this, securityManager), this);
+        com.l7defense.listener.CaptchaListener guiCaptcha = new com.l7defense.listener.CaptchaListener(this, securityManager);
+        com.l7defense.listener.EntityCaptchaListener entityCaptcha = new com.l7defense.listener.EntityCaptchaListener(this, securityManager, true);
+        com.l7defense.listener.MapCaptchaListener mapCaptcha = new com.l7defense.listener.MapCaptchaListener(this, securityManager);
+
+        pm.registerEvents(guiCaptcha, this);
         pm.registerEvents(new com.l7defense.listener.PacketSpamListener(securityManager, spamEn, spamLimit), this);
-        pm.registerEvents(new com.l7defense.listener.EntityCaptchaListener(this, securityManager, true), this);
+        pm.registerEvents(entityCaptcha, this);
         pm.registerEvents(new com.l7defense.listener.ResourcePackVerifier(this, securityManager, true), this);
         pm.registerEvents(new com.l7defense.listener.MovementHeuristicsListener(securityManager, moveEn), this);
-        pm.registerEvents(new com.l7defense.listener.MapCaptchaListener(this, securityManager), this);
+        pm.registerEvents(mapCaptcha, this);
         pm.registerEvents(new com.l7defense.listener.ChatAiListener(securityManager), this);
+
+        securityManager.setGuiCaptchaTrigger(guiCaptcha::openCaptcha);
+        securityManager.setEntityCaptchaTrigger(entityCaptcha::spawnCaptchaEntity);
+        securityManager.setMapCaptchaTrigger(mapCaptcha::triggerMapCaptcha);
         
         com.l7defense.listener.ExploitCrasherListener crasherListener = new com.l7defense.listener.ExploitCrasherListener(securityManager);
         pm.registerEvents(crasherListener, this);
