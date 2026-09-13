@@ -32,11 +32,13 @@ public final class ResourcePackVerifier implements Listener {
     // 타임아웃 킥 관리를 위한 작업 맵
     private final ConcurrentHashMap<UUID, Integer> pendingVerifications = new ConcurrentHashMap<>();
 
-    private static final String DUMMY_URL = "https://github.com/LOOHP/ServerResourcepackDummy/raw/master/dummy.zip";
-    // Dummy zip hash (임의 적용, 봇은 검사조차 못함)
-    private static final byte[] DUMMY_HASH = new byte[20]; 
+        private static final String DUMMY_URL = "https://cdn.modrinth.com/data/T6c6rG8P/versions/wUUSrYkF/Empty%20Resource%20Pack.zip";
 
-    public ResourcePackVerifier(Plugin plugin, SecurityManager securityManager, boolean enabled) {
+    // 빈 해시를 사용할 경우 1.20+ 에서는 종종 오류가 나므로 아예 null 혹은 빈 해시 바이트 배열 사용. 
+    // 혹은 byte array 20자리 빈 공간
+    private static final byte[] DUMMY_HASH = new byte[20]; // 0으로 채워진 해시 (Spigot 스펙)
+
+    public ResourcePackVerifier(Plugin plugin, SecurityManager securityManager, boolean enabled) {(Plugin plugin, SecurityManager securityManager, boolean enabled) {
         this.plugin = plugin;
         this.securityManager = securityManager;
         this.enabled = enabled;
@@ -59,7 +61,7 @@ public final class ResourcePackVerifier implements Listener {
                 if (pendingVerifications.containsKey(player.getUniqueId()) && player.isOnline()) {
                     pendingVerifications.remove(player.getUniqueId());
                     securityManager.blockIp(ip, "리소스팩 캡챠 타임아웃");
-                    player.kick(Component.text("리소스팩 검증에 실패했습니다. (타임아웃)", NamedTextColor.RED));
+                    player.kick(Component.text("리소스팩 다운로드에 실패했습니다. (타임아웃)\n\n서버 리소스팩 설정을 [사용]으로 변경 후 재접속해주세요.", NamedTextColor.RED));
                 }
             }, 20L * 15L).getTaskId();
             
