@@ -47,6 +47,20 @@ public final class MapCaptchaListener implements Listener {
         this.securityManager = securityManager;
     }
 
+    
+    public void triggerMapCaptcha(Player player) {
+        String captchaText = String.format("%04d", random.nextInt(10000));
+        activeCaptchas.put(player.getUniqueId(), captchaText);
+        org.bukkit.map.MapView view = getOrCreateCaptchaMap(player.getWorld());
+        org.bukkit.inventory.ItemStack mapItem = new org.bukkit.inventory.ItemStack(org.bukkit.Material.FILLED_MAP);
+        org.bukkit.inventory.meta.MapMeta meta = (org.bukkit.inventory.meta.MapMeta) mapItem.getItemMeta();
+        if (meta != null) {
+            meta.setMapView(view);
+            mapItem.setItemMeta(meta);
+        }
+        player.getInventory().setItemInMainHand(mapItem);
+        player.sendMessage(net.kyori.adventure.text.Component.text("[L7] 테스트: 손에 든 지도를 보고 코드를 채팅에 입력하세요.", net.kyori.adventure.text.format.NamedTextColor.RED));
+    }
     private MapView getOrCreateCaptchaMap(org.bukkit.World world) {
         if (captchaMapView == null) {
             captchaMapView = Bukkit.createMap(world);
