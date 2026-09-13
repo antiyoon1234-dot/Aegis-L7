@@ -141,7 +141,7 @@ public class SecurityManager {
 
         // 비동기 이벤트(AsyncPlayerChatEvent 등)에서 호출될 수 있으므로,
         // 순수 Bukkit API (Kick, SendMessage)는 반드시 메인 스레드(Sync)에서 실행
-        org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("L7Defense");
+        org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("L7DefensePlugin");
         if (plugin != null) {
             org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
                 if (!player.isOnline()) return;
@@ -420,7 +420,7 @@ public class SecurityManager {
             }
         }
 
-        org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("L7Defense");
+        org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("L7DefensePlugin");
         if (plugin == null) return;
 
         org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
