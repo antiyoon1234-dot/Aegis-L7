@@ -38,10 +38,9 @@ jobs:
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: latest
-        name: "Aegis-L7 (Latest Build)"
-        body: "코드가 수정될 때마다 자동으로 빌드되어 갱신되는 최신 버전 플러그인 파일(.jar)입니다."
+        tag_name: build-${{ github.run_number }}
+        name: "Aegis-L7 (Build #${{ github.run_number }})"
+        body: "코드가 수정될 때마다 자동 빌드된 최신 플러그인 파일(.jar)입니다."
         files: build/libs/*.jar
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        prerelease: true
+        make_latest: true
