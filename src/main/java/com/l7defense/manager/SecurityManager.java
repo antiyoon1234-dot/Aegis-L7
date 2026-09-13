@@ -410,7 +410,7 @@ public class SecurityManager {
         String ip = com.l7defense.util.IpUtils.getIp(player);
         com.l7defense.module.PenaltyAction penalty = getModuleManager().getPenalty(module);
 
-        // 1. OP 알림 전송
+                // 1. OP 알림 전송
         org.bukkit.Bukkit.getLogger().warning("[L7-Notify] " + player.getName() + " - " + module.getId() + " 테스트");
         for (org.bukkit.entity.Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
             if (p.isOp()) {
@@ -420,38 +420,44 @@ public class SecurityManager {
             }
         }
 
-        org.bukkit.plugin.Plugin plugin = org.bukkit.Bukkit.getPluginManager().getPlugin("L7DefensePlugin");
+        // 강제로 플러그인 객체 찾기
+        org.bukkit.plugin.Plugin plugin = org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(getClass());
+        org.bukkit.Bukkit.getLogger().info("[L7-Debug] Plugin Found: " + (plugin != null ? plugin.getName() : "NULL"));
+
         if (plugin == null) return;
 
         org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
+            org.bukkit.Bukkit.getLogger().info("[L7-Debug] Scheduler Started for: " + module.getId());
             switch (module) {
-                                case GUI_CAPTCHA -> {
+                case GUI_CAPTCHA -> {
                     flagForGuiCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] GUI 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
+                    org.bukkit.Bukkit.getLogger().info("[L7-Debug] guiCaptchaTrigger is " + (guiCaptchaTrigger != null ? "READY" : "NULL"));
                     if (guiCaptchaTrigger != null) guiCaptchaTrigger.accept(player);
                 }
                 case ENTITY_CAPTCHA -> {
                     flagForEntityCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] 3D Entity 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
+                    org.bukkit.Bukkit.getLogger().info("[L7-Debug] entityCaptchaTrigger is " + (entityCaptchaTrigger != null ? "READY" : "NULL"));
                     if (entityCaptchaTrigger != null) entityCaptchaTrigger.accept(player);
+                }
+                case RP_CAPTCHA -> {
+                    flagForResourcePackCaptcha(ip);
+                    player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] 리소스팩 캡챠 발동! (리소스팩 적용은 클라이언트 접속 시에만 가능하여 재접속이 필요합니다.)", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
                 }
                 case MAP_CAPTCHA -> {
                     flagForMapCaptcha(ip);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] Map OCR 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
+                    org.bukkit.Bukkit.getLogger().info("[L7-Debug] mapCaptchaTrigger is " + (mapCaptchaTrigger != null ? "READY" : "NULL"));
                     if (mapCaptchaTrigger != null) mapCaptchaTrigger.accept(player);
                 }
                 default -> {
                     if (penalty == com.l7defense.module.PenaltyAction.KICK) {
-                        player.kick(net.kyori.adventure.text.Component.text(
-                            "§c[L7 Defense] KICK 처벌 테스트!\n§f모듈: " + module.getId() + "\n§7다시 접속하실 수 있습니다."));
+                        player.kick(net.kyori.adventure.text.Component.text("§c[L7 Defense] KICK 처벌 테스트!\n§f모듈: " + module.getId() + "\n§7다시 접속하실 수 있습니다."));
                     } else if (penalty == com.l7defense.module.PenaltyAction.BAN) {
-                        player.kick(net.kyori.adventure.text.Component.text(
-                            "§4[L7 Defense] BAN 처벌 테스트!\n§f모듈: " + module.getId() +
-                            "\n§c실제라면 영구 IP 차단 적용.\n§7(테스트: IP 차단 없음. 다시 들어오세요)"));
+                        player.kick(net.kyori.adventure.text.Component.text("§4[L7 Defense] BAN 처벌 테스트!\n§f모듈: " + module.getId() + "\n§c실제라면 영구 IP 차단 적용.\n§7(테스트: IP 차단 없음. 다시 들어오세요)"));
                     } else {
-                        player.sendMessage(net.kyori.adventure.text.Component.text(
-                            "§a[L7] NOTIFY 테스트 완료! 강퇴 없이 알림만 전송됨.",
-                            net.kyori.adventure.text.format.NamedTextColor.GREEN));
+                        player.sendMessage(net.kyori.adventure.text.Component.text("§a[L7] NOTIFY 테스트 완료! 강퇴 없이 알림만 전송됨.", net.kyori.adventure.text.format.NamedTextColor.GREEN));
                     }
                 }
             }
