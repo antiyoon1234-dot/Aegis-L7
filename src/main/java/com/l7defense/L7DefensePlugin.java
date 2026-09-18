@@ -33,6 +33,7 @@ import java.util.logging.Logger;
 public final class L7DefensePlugin extends JavaPlugin {
 
     private SecurityManager securityManager;
+    private final java.util.List<AutoCloseable> lifecycles = new java.util.ArrayList<>();
     private AlertManager alertManager;
     private FirewallManager firewallManager;
     private com.l7defense.util.GeoIpManager geoIpManager;
@@ -61,6 +62,7 @@ public final class L7DefensePlugin extends JavaPlugin {
     private void initializeFromConfig() {
         Logger logger = getLogger();
         FileConfiguration config = getConfig();
+        validateConfiguration(config);
 
         // 기본 보안 설정
         int maxConn = config.getInt("rate-limit.max-connections", 5);
@@ -77,7 +79,7 @@ public final class L7DefensePlugin extends JavaPlugin {
         int botThresh = config.getInt("bot-filter.suspicious-threshold", 3);
         int alertInt = config.getInt("alert.interval-seconds", 5);
         boolean nameBypass = config.getBoolean("whitelist.name-bypass-all", true);
-        
+
         Set<String> wPlayers = java.util.Collections.unmodifiableSet(new HashSet<>(config.getStringList("whitelist.players")));
         Set<String> wIps = java.util.Collections.unmodifiableSet(IpUtils.normalizeAll(new HashSet<>(config.getStringList("whitelist.ips"))));
 
@@ -90,13 +92,13 @@ public final class L7DefensePlugin extends JavaPlugin {
         boolean hostEn = config.getBoolean("advanced-heuristics.hostname-validation.enabled", true);
         boolean hostNum = config.getBoolean("advanced-heuristics.hostname-validation.block-numeric-ip", true);
         List<String> hostDomains = config.getStringList("advanced-heuristics.hostname-validation.allowed-domains");
-        
+
         // v1.4 GeoIP / Anti-VPN
         boolean vpnEn = config.getBoolean("anti-vpn.enabled", true);
         boolean vpnOnlyAtk = config.getBoolean("anti-vpn.only-under-attack", true);
         boolean blockForeign = config.getBoolean("geoip.block-foreign-under-attack", false);
         List<String> allowedCountries = config.getStringList("geoip.allowed-countries");
-        
+
         // v1.4 Packet Spam
         boolean spamEn = config.getBoolean("post-login.packet-spam-filter.enabled", true);
         int spamLimit = config.getInt("post-login.packet-spam-filter.max-actions-per-sec", 50);
@@ -111,24 +113,29 @@ public final class L7DefensePlugin extends JavaPlugin {
 
         // v1.6 모듈 매니저 및 명령어
         this.moduleManager = new com.l7defense.module.ModuleConfigManager(this); com.l7defense.module.ModuleConfigManager moduleManager = this.moduleManager;
-        
+
         boolean fwEn = config.getBoolean("firewall.enabled", false);
         String fwBlock = config.getString("firewall.command-block", "");
         String fwUnblock = config.getString("firewall.command-unblock", "");
 
         // 매니저 초기화
-        firewallManager = new FirewallManager(this, logger, fwEn, fwBlock, fwUnblock);
-        com.l7defense.util.GeoIpManager geoIpManager = new com.l7defense.util.GeoIpManager(
+        if (firewallManager == null) firewallManager = new FirewallManager(this, logger, fwEn, fwBlock, fwUnblock);
+        else firewallManager.updateConfiguration(fwEn, fwBlock, fwUnblock);
+        geoIpManager = new com.l7defense.util.GeoIpManager(
                 logger, vpnEn || blockForeign, vpnEn, blockForeign, allowedCountries
         );
-        
+
         securityManager = new SecurityManager(
                 maxConn, connWin, maxPing, pingWin, blockDur, maxCache,
                 atkThresh, denThresh, atkWin, botThresh, rejoinMin, rejoinMax
         );
         securityManager.setModules(firewallManager, geoIpManager);
         securityManager.setModuleManager(moduleManager);
-        
+        var sessions = new com.l7defense.manager.PlayerSessions(this);
+        securityManager.setSessions(sessions);
+        lifecycles.add(sessions);
+        getServer().getPluginManager().registerEvents(sessions, this);
+
         // v1.5 Redis
         if (redisManager != null) {
             redisManager.shutdown();
@@ -137,7 +144,7 @@ public final class L7DefensePlugin extends JavaPlugin {
                 this, logger, securityManager, redisEn, rHost, rPort, rPass
         );
         securityManager.setRedisManager(redisManager);
-        
+
         alertManager = new AlertManager(this, securityManager);
 
         logger.info("[모듈] GeoIP / VPN 방어: " + (vpnEn || blockForeign ? "활성화" : "비활성화"));
@@ -169,16 +176,21 @@ public final class L7DefensePlugin extends JavaPlugin {
                 pingJoin, pingOnlyAtk, rejoinEn, hostEn, hostNum, hostDomains,
                 vpnEn, vpnOnlyAtk), this);
         pm.registerEvents(new PingFloodListener(securityManager, logger, wIps), this);
-        
+
         // v1.4 & v1.5 & v1.6 & v1.7 캡챠 및 방어 리스너
         com.l7defense.listener.CaptchaListener guiCaptcha = new com.l7defense.listener.CaptchaListener(this, securityManager);
         com.l7defense.listener.EntityCaptchaListener entityCaptcha = new com.l7defense.listener.EntityCaptchaListener(this, securityManager, true);
         com.l7defense.listener.MapCaptchaListener mapCaptcha = new com.l7defense.listener.MapCaptchaListener(this, securityManager);
 
+        lifecycles.add(guiCaptcha);
+        lifecycles.add(entityCaptcha);
+        lifecycles.add(mapCaptcha);
         pm.registerEvents(guiCaptcha, this);
         pm.registerEvents(new com.l7defense.listener.PacketSpamListener(securityManager, spamEn, spamLimit), this);
         pm.registerEvents(entityCaptcha, this);
-        pm.registerEvents(new com.l7defense.listener.ResourcePackVerifier(this, securityManager, true), this);
+        var rpCaptcha = new com.l7defense.listener.ResourcePackVerifier(this, securityManager, true);
+        lifecycles.add(rpCaptcha);
+        pm.registerEvents(rpCaptcha, this);
         pm.registerEvents(new com.l7defense.listener.MovementHeuristicsListener(securityManager, moveEn), this);
         pm.registerEvents(mapCaptcha, this);
         pm.registerEvents(new com.l7defense.listener.ChatAiListener(securityManager), this);
@@ -186,12 +198,14 @@ public final class L7DefensePlugin extends JavaPlugin {
         securityManager.setGuiCaptchaTrigger(guiCaptcha::openCaptcha);
         securityManager.setEntityCaptchaTrigger(entityCaptcha::spawnCaptchaEntity);
         securityManager.setMapCaptchaTrigger(mapCaptcha::triggerMapCaptcha);
-        
+
         com.l7defense.listener.ExploitCrasherListener crasherListener = new com.l7defense.listener.ExploitCrasherListener(securityManager);
         pm.registerEvents(crasherListener, this);
 
         // v1.8 킬아우라 허니팟 및 매크로 주파수 분석기
-        pm.registerEvents(new com.l7defense.listener.OffensiveDefenseListener(securityManager, this), this);
+        var offensive = new com.l7defense.listener.OffensiveDefenseListener(securityManager, this);
+        lifecycles.add(offensive);
+        pm.registerEvents(offensive, this);
 
         // v1.9 월드 다운로더(맵 유출) 차단 및 조명 폭탄 방어
         com.l7defense.listener.ClientModDetectorListener wdlListener = new com.l7defense.listener.ClientModDetectorListener(securityManager);
@@ -199,7 +213,7 @@ public final class L7DefensePlugin extends JavaPlugin {
 
         // 패킷 크래셔 페이로드 채널
         try { getServer().getMessenger().registerIncomingPluginChannel(this, "minecraft:custom_payload", crasherListener); } catch (Exception ignored) {}
-        
+
         // v1.5 플러그인 채널 (Brand Timing)
         com.l7defense.listener.BrandTimingListener brandListener = new com.l7defense.listener.BrandTimingListener(this, securityManager, brandEn);
         try { getServer().getMessenger().registerIncomingPluginChannel(this, "minecraft:brand", brandListener); } catch (Exception ignored) {}
@@ -210,42 +224,71 @@ public final class L7DefensePlugin extends JavaPlugin {
             getServer().getMessenger().registerIncomingPluginChannel(this, "wdl:control", wdlListener);
             getServer().getMessenger().registerIncomingPluginChannel(this, "worlddownloader:init", wdlListener);
         } catch (Exception ignored) {}
-        
+
         pm.registerEvents(new org.bukkit.event.Listener() {
             @org.bukkit.event.EventHandler(priority = org.bukkit.event.EventPriority.MONITOR)
             public void onJoin(org.bukkit.event.player.PlayerJoinEvent e) { brandListener.recordJoin(e.getPlayer()); }
             @org.bukkit.event.EventHandler
-            public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) { 
-                brandListener.recordQuit(e.getPlayer()); 
+            public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) {
+                brandListener.recordQuit(e.getPlayer());
                 alertManager.removeMutedPlayer(e.getPlayer().getUniqueId());
             }
         }, this);
 
         // 스케줄러
-        alertManager.startAlertScheduler(alertInt * 20L);
+        alertManager.startAlertScheduler(Math.max(1, alertInt) * 20L);
+        SecurityManager currentSecurity = securityManager;
         getServer().getScheduler().runTaskTimerAsynchronously(this,
-                () -> securityManager.evaluateAttackStatus(), atkEvalSec * 20L, atkEvalSec * 20L);
+                currentSecurity::evaluateAttackStatus, Math.max(1, atkEvalSec) * 20L, Math.max(1, atkEvalSec) * 20L);
     }
 
-    public void reloadPlugin() {
+    public boolean reloadPlugin() {
         getLogger().info("[리로드] 설정 재적용 시작...");
-        if (alertManager != null) alertManager.stopAlertScheduler();
+        reloadConfig();
+        try { validateConfiguration(getConfig()); }
+        catch (IllegalArgumentException ex) {
+            getLogger().warning("[리로드] 기존 방어 설정 유지: " + ex.getMessage());
+            return false;
+        }
+        stopRuntime();
         getServer().getScheduler().cancelTasks(this);
         org.bukkit.event.HandlerList.unregisterAll(this);
         getServer().getMessenger().unregisterIncomingPluginChannel(this);
-        reloadConfig();
         initializeFromConfig();
         getLogger().info("[리로드] 설정 재적용 완료");
+        return true;
+    }
+
+    private static void validateConfiguration(FileConfiguration config) {
+        for (String path : new String[] {"rate-limit.max-connections", "rate-limit.window-seconds", "ping-flood.max-pings",
+                "ping-flood.window-seconds", "blocking.duration-minutes", "blocking.max-cache-size", "attack-detection.threshold",
+                "attack-detection.denial-threshold", "attack-detection.window-seconds", "bot-filter.suspicious-threshold"}) {
+            if (config.contains(path) && config.getInt(path) < 1) throw new IllegalArgumentException(path + " must be positive");
+        }
+        int min = config.getInt("advanced-heuristics.rejoin-verification.min-delay-seconds", 3);
+        int max = config.getInt("advanced-heuristics.rejoin-verification.max-delay-seconds", 15);
+        if (min < 0 || max < Math.max(1, min)) throw new IllegalArgumentException("Invalid rejoin verification delay range");
     }
 
     @Override
     public void onDisable() {
-        if (alertManager != null) alertManager.stopAlertScheduler();
+        stopRuntime();
         getServer().getScheduler().cancelTasks(this);
         getServer().getMessenger().unregisterIncomingPluginChannel(this);
-        if (securityManager != null) securityManager.resetStats();
-        if (redisManager != null) redisManager.shutdown();
+        if (firewallManager != null) firewallManager.close();
         getLogger().info("비활성화 완료");
+    }
+
+    private void stopRuntime() {
+        if (alertManager != null) alertManager.stopAlertScheduler();
+        if (securityManager != null) securityManager.shutdown();
+        if (redisManager != null) redisManager.shutdown();
+        if (geoIpManager != null) geoIpManager.close();
+        for (int i = lifecycles.size() - 1; i >= 0; i--) {
+            try { lifecycles.get(i).close(); }
+            catch (Exception ex) { getLogger().log(java.util.logging.Level.WARNING, "[L7] 리소스 정리 실패", ex); }
+        }
+        lifecycles.clear();
     }
 
     public SecurityManager getSecurityManager() { return securityManager; }

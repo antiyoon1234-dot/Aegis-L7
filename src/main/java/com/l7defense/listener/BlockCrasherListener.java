@@ -21,7 +21,8 @@ public class BlockCrasherListener implements Listener {
     private final SecurityManager securityManager;
 
     // 유저별 최근 블록 조작 타임스탬프 큐 (스레드 세이프)
-    private final Map<UUID, Queue<Long>> blockHistory = new java.util.concurrent.ConcurrentHashMap<>();
+    private record BlockAction(long time, boolean light) {}
+    private final Map<UUID, Queue<BlockAction>> blockHistory = new java.util.concurrent.ConcurrentHashMap<>();
 
     // 조명(Light) 업데이트를 크게 유발하여 랙을 일으키기 쉬운 블록들
     private static final Set<Material> LIGHT_BLOCKS = EnumSet.of(
@@ -48,16 +49,17 @@ public class BlockCrasherListener implements Listener {
         if (!securityManager.getModuleManager().isEnabled(DefenseModule.LIGHT_CRASHER)) return;
 
         UUID uuid = player.getUniqueId();
-        Queue<Long> history = blockHistory.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
+        Queue<BlockAction> history = blockHistory.computeIfAbsent(uuid, k -> new java.util.ArrayDeque<>());
         
-        long now = System.currentTimeMillis();
-        history.add(now);
+        long now = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
+        while (!history.isEmpty() && now - history.peek().time >= 1000) history.poll();
+        history.add(new BlockAction(now, LIGHT_BLOCKS.contains(blockType)));
 
         // 조명 블록은 초당 12회 제한, 일반 블록은 초당 25회 제한 (기계적인 FastPlace 모드)
-        int threshold = LIGHT_BLOCKS.contains(blockType) ? 12 : 25;
+        int threshold = 25;
         
-        if (history.size() > threshold) {
-            long oldest = history.poll(); // 가장 오래된 타임스탬프
+        if (history.size() > threshold || history.stream().filter(BlockAction::light).count() > 12) {
+            long oldest = history.peek().time; // 가장 오래된 타임스탬프
             
             // 지정된 횟수의 블록 조작이 1초(1000ms) 이내에 일어났다면 (초당 threshold 회 이상)
             if (now - oldest < 1000) {

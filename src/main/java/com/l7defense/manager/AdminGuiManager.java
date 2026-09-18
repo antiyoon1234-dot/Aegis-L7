@@ -54,12 +54,12 @@ public class AdminGuiManager implements Listener {
         Material mat = getMaterialForModule(module);
         ItemStack item = new ItemStack(mat);
         ItemMeta meta = item.getItemMeta();
-        
+
         boolean isEnabled = configManager.isEnabled(module);
         PenaltyAction penalty = configManager.getPenalty(module);
 
         meta.setDisplayName((isEnabled ? "§a§l[ON] §f" : "§c§l[OFF] §7") + module.getId().toUpperCase());
-        
+
         List<String> lore = new ArrayList<>();
         lore.add("§7" + module.getDescription());
         lore.add("");
@@ -68,7 +68,7 @@ public class AdminGuiManager implements Listener {
         lore.add("");
         lore.add("§b[좌클릭] §7상태(ON/OFF) 전환");
         lore.add("§d[우클릭] §7처벌 수위 변경");
-        
+
         meta.setLore(lore);
         item.setItemMeta(meta);
         return item;
@@ -101,10 +101,11 @@ public class AdminGuiManager implements Listener {
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (!event.getView().getTitle().equals(GUI_TITLE)) return;
-        
+
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (!player.hasPermission("l7defense.admin")) return;
+        if (event.getRawSlot() < 0 || event.getRawSlot() >= event.getView().getTopInventory().getSize()) return;
 
         ItemStack clicked = event.getCurrentItem();
         if (clicked == null || clicked.getType() == Material.AIR || !clicked.hasItemMeta()) return;
@@ -123,7 +124,7 @@ public class AdminGuiManager implements Listener {
             boolean newState = !configManager.isEnabled(module);
             configManager.setEnabled(module, newState);
             player.sendMessage("§a[L7] §f" + module.getId() + " §7모듈이 " + (newState ? "§a활성화" : "§c비활성화") + " §7되었습니다.");
-        } 
+        }
         // 우클릭: 처벌 상태 순환 변경 (BAN -> KICK -> NOTIFY -> BAN)
         else if (event.isRightClick()) {
             PenaltyAction current = configManager.getPenalty(module);
@@ -133,7 +134,12 @@ public class AdminGuiManager implements Listener {
         }
 
         // GUI 리프레시
-        openGui(player);
+        securityManager.getSessions().submit(player, "admin-gui", () -> openGui(player));
+    }
+
+    @EventHandler
+    public void onInventoryDrag(org.bukkit.event.inventory.InventoryDragEvent event) {
+        if (event.getView().getTitle().equals(GUI_TITLE)) event.setCancelled(true);
     }
 
     private PenaltyAction getNextPenalty(PenaltyAction current) {

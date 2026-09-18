@@ -8,6 +8,8 @@ import com.l7defense.util.IpUtils;
 import com.l7defense.util.RedisManager;
 
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
+import com.l7defense.module.DefenseModule;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
@@ -51,14 +53,24 @@ public class SecurityManager {
     private final Cache<Long, Boolean> recentDeniedEvents;
     private final Cache<Long, Boolean> recentAttemptEvents;
     private final Cache<String, AtomicInteger> suspiciousNameCounter;
+    private final Cache<String, Boolean> captchaRetryGranted;
+    private final Cache<VerificationKey, Long> captchaRetries = Caffeine.newBuilder()
+            .expireAfterWrite(1, TimeUnit.MINUTES).maximumSize(10_000).build();
 
     // ── v1.3 / v1.4 신규 캐시 ──────────────────────────────────────
     private final Cache<String, Boolean> recentPings;
-    private final Cache<String, Long> pendingVerification;
-    private final Cache<String, Boolean> verifiedIps;
-    
+    private record VerificationKey(String ip, UUID playerId) {}
+    private final Cache<VerificationKey, Long> pendingVerification;
+    private final CaptchaStates captchas = new CaptchaStates();
+    private PlayerSessions sessions;
+    private volatile boolean closed;
+    public void setSessions(PlayerSessions sessions) { this.sessions = sessions; }
+    public PlayerSessions getSessions() { return sessions; }
+    public CaptchaStates getCaptchas() { return captchas; }
+    private final Cache<UUID, Boolean> verifiedPlayers;
+
     /** 인게임 GUI 캡챠를 통과해야 하는 IP 목록 (v1.4) */
-    private final Cache<String, Boolean> pendingGuiCaptcha;
+
 
     // ── 고유 ID 생성기 & 통계 ──────────────────────────────
     private final AtomicLong blockEventId = new AtomicLong(0);
@@ -81,12 +93,31 @@ public class SecurityManager {
     public void setEntityCaptchaTrigger(java.util.function.Consumer<org.bukkit.entity.Player> trigger) { this.entityCaptchaTrigger = trigger; }
     public void setMapCaptchaTrigger(java.util.function.Consumer<org.bukkit.entity.Player> trigger) { this.mapCaptchaTrigger = trigger; }
 
+    public void challengeHeuristic(org.bukkit.entity.Player player, DefenseModule module, String reason) {
+        if (closed || moduleManager == null || !moduleManager.isEnabled(module)) return;
+        if (moduleManager.getPenalty(module) == com.l7defense.module.PenaltyAction.NOTIFY) {
+            handleViolation(player, module, reason);
+        } else if (guiCaptchaTrigger != null && moduleManager.isEnabled(DefenseModule.GUI_CAPTCHA)) {
+            if (captchas.get(player.getUniqueId()) != null) return;
+            captchas.start(player.getUniqueId(), DefenseModule.GUI_CAPTCHA);
+            guiCaptchaTrigger.accept(player);
+        } else {
+            handleViolation(player, module, reason);
+        }
+    }
+
     public SecurityManager(int maxConnections, int connectionWindowSec,
                            int maxPings, int pingWindowSec,
                            int blockDurationMin, int maxCacheSize,
                            int attackThreshold, int denialThreshold,
                            int attackWindowSec, int suspiciousNameThreshold,
                            int rejoinMinDelay, int rejoinMaxDelay) {
+        if (maxConnections < 1 || connectionWindowSec < 1 || maxPings < 1 || pingWindowSec < 1
+                || blockDurationMin < 1 || maxCacheSize < 1 || attackThreshold < 1 || denialThreshold < 1
+                || attackWindowSec < 1 || suspiciousNameThreshold < 1 || rejoinMinDelay < 0
+                || rejoinMaxDelay < Math.max(1, rejoinMinDelay)) {
+            throw new IllegalArgumentException("보안 한도/시간 설정이 유효하지 않습니다.");
+        }
         this.maxConnectionsPerWindow = maxConnections;
         this.connectionWindowSeconds = connectionWindowSec;
         this.maxPingsPerWindow = maxPings;
@@ -106,13 +137,14 @@ public class SecurityManager {
         this.recentDeniedEvents = Caffeine.newBuilder().expireAfterWrite(attackWindowSec, TimeUnit.SECONDS).maximumSize(100_000).build();
         this.recentAttemptEvents = Caffeine.newBuilder().expireAfterWrite(60, TimeUnit.SECONDS).maximumSize(100_000).build();
         this.suspiciousNameCounter = Caffeine.newBuilder().expireAfterWrite(connectionWindowSec, TimeUnit.SECONDS).maximumSize(10_000).build();
+        this.captchaRetryGranted = Caffeine.newBuilder().expireAfterWrite(connectionWindowSec, TimeUnit.SECONDS).maximumSize(10_000).build();
 
         this.recentPings = Caffeine.newBuilder().expireAfterWrite(60, TimeUnit.SECONDS).maximumSize(50_000).build();
-        this.pendingVerification = Caffeine.newBuilder().expireAfterWrite(rejoinMaxDelay + 5, TimeUnit.SECONDS).maximumSize(10_000).build();
-        this.verifiedIps = Caffeine.newBuilder().expireAfterWrite(12, TimeUnit.HOURS).maximumSize(50_000).build();
-        
+        this.pendingVerification = Caffeine.newBuilder().expireAfterWrite((long) rejoinMaxDelay + 5, TimeUnit.SECONDS).maximumSize(10_000).build();
+        this.verifiedPlayers = Caffeine.newBuilder().expireAfterWrite(12, TimeUnit.HOURS).maximumSize(50_000).build();
+
         // v1.4
-        this.pendingGuiCaptcha = Caffeine.newBuilder().expireAfterWrite(5, TimeUnit.MINUTES).maximumSize(10_000).build();
+
     }
 
     public void setModules(FirewallManager firewallManager, GeoIpManager geoIpManager) {
@@ -123,11 +155,11 @@ public class SecurityManager {
     public void setRedisManager(RedisManager redisManager) {
         this.redisManager = redisManager;
     }
-    
+
     public void setModuleManager(com.l7defense.module.ModuleConfigManager moduleManager) {
         this.moduleManager = moduleManager;
     }
-    
+
     public com.l7defense.module.ModuleConfigManager getModuleManager() {
         return this.moduleManager;
     }
@@ -137,34 +169,27 @@ public class SecurityManager {
      * BAN, KICK, NOTIFY 설정에 따라 알아서 처리합니다.
      */
     public void handleViolation(org.bukkit.entity.Player player, com.l7defense.module.DefenseModule module, String reason) {
-        if (moduleManager == null) return;
-        if (!moduleManager.isEnabled(module)) return;
-        
-        com.l7defense.module.PenaltyAction action = moduleManager.getPenalty(module);
-        String ip = IpUtils.getIp(player);
-        
-        if (action == com.l7defense.module.PenaltyAction.BAN) {
-            blockIp(ip, reason);
-        }
+        if (closed || sessions == null) return;
+        if (org.bukkit.Bukkit.isPrimaryThread()) applyViolation(player, module, reason);
+        else sessions.submit(player, "violation-" + module.name(), () -> applyViolation(player, module, reason));
+    }
 
+    private void applyViolation(org.bukkit.entity.Player player, DefenseModule module, String reason) {
+        if (closed || moduleManager == null || !moduleManager.isEnabled(module)) return;
+        var action = moduleManager.getPenalty(module);
+        String ip = IpUtils.getIp(player);
         // 비동기 이벤트(AsyncPlayerChatEvent 등)에서 호출될 수 있으므로,
         // 순수 Bukkit API (Kick, SendMessage)는 반드시 메인 스레드(Sync)에서 실행
-        org.bukkit.plugin.Plugin plugin = org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(getClass());
-        if (plugin != null) {
-            org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
-                if (!player.isOnline()) return;
-
-                if (action == com.l7defense.module.PenaltyAction.BAN) {
-                    player.kick(net.kyori.adventure.text.Component.text("서버 보안 정책에 의해 차단되었습니다.\n\n§c사유: " + reason, net.kyori.adventure.text.format.NamedTextColor.RED));
-                } else if (action == com.l7defense.module.PenaltyAction.KICK) {
-                    player.kick(net.kyori.adventure.text.Component.text("비정상적인 접근/행동으로 강제 퇴장되었습니다.\n\n§c사유: " + reason, net.kyori.adventure.text.format.NamedTextColor.RED));
-                } else if (action == com.l7defense.module.PenaltyAction.NOTIFY) {
-                    org.bukkit.Bukkit.getLogger().warning("[L7-Notify] " + player.getName() + "(" + ip + ") - " + reason);
-                    for (org.bukkit.entity.Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
-                        if (p.isOp()) p.sendMessage(net.kyori.adventure.text.Component.text("[L7 경고] " + player.getName() + ": " + reason, net.kyori.adventure.text.format.NamedTextColor.YELLOW));
-                    }
-                }
-            });
+        if (action == com.l7defense.module.PenaltyAction.BAN) {
+            blockIp(ip, reason);
+            player.kick(net.kyori.adventure.text.Component.text("서버 보안 정책에 의해 차단되었습니다.\n\n사유: " + reason, net.kyori.adventure.text.format.NamedTextColor.RED));
+        } else if (action == com.l7defense.module.PenaltyAction.KICK) {
+            player.kick(net.kyori.adventure.text.Component.text("비정상적인 접근/행동으로 강제 퇴장되었습니다.\n\n사유: " + reason, net.kyori.adventure.text.format.NamedTextColor.RED));
+        } else {
+            org.bukkit.Bukkit.getLogger().warning("[L7-Notify] " + player.getName() + "(" + ip + ") - " + reason);
+            for (org.bukkit.entity.Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
+                if (p.isOp()) p.sendMessage(net.kyori.adventure.text.Component.text("[L7 경고] " + player.getName() + ": " + reason, net.kyori.adventure.text.format.NamedTextColor.YELLOW));
+            }
         }
     }
 
@@ -173,7 +198,7 @@ public class SecurityManager {
      * Player 객체가 생성되기 전이므로 AsyncPlayerPreLoginEvent를 통해 제어합니다.
      */
     public void handlePreLoginViolation(org.bukkit.event.player.AsyncPlayerPreLoginEvent event, com.l7defense.module.DefenseModule module, String reason) {
-        if (moduleManager == null || !moduleManager.isEnabled(module)) return;
+        if (closed || moduleManager == null || !moduleManager.isEnabled(module)) return;
 
         com.l7defense.module.PenaltyAction action = moduleManager.getPenalty(module);
         String ip = event.getAddress().getHostAddress();
@@ -209,6 +234,26 @@ public class SecurityManager {
         return false;
     }
 
+    public void offerCaptchaRetry(org.bukkit.entity.Player player) {
+        var snapshot = sessions.get(player);
+        if (snapshot != null && captchaRetryGranted.asMap().putIfAbsent(snapshot.ip(), Boolean.TRUE) == null) {
+            captchaRetries.put(new VerificationKey(snapshot.ip(), snapshot.id()), System.nanoTime());
+        }
+    }
+
+    public boolean recordAndCheckConnection(String rawIp, UUID id) {
+        String ip = IpUtils.normalize(rawIp);
+        if (isBlocked(ip)) return recordAndCheckConnection(ip);
+        VerificationKey key = new VerificationKey(ip, id);
+        Long issued = captchaRetries.getIfPresent(key);
+        if (issued != null && System.nanoTime() - issued >= TimeUnit.SECONDS.toNanos(rejoinMinDelay)
+                && captchaRetries.asMap().remove(key, issued)) {
+            recordAttempt();
+            return false;
+        }
+        return recordAndCheckConnection(ip);
+    }
+
     public boolean recordAndCheckPing(String rawIp) {
         String ip = IpUtils.normalize(rawIp);
         if (isBlockedNormalized(ip)) {
@@ -235,7 +280,8 @@ public class SecurityManager {
     public boolean recordSuspiciousName(String rawIp) {
         String ip = IpUtils.normalize(rawIp);
         AtomicInteger counter = suspiciousNameCounter.get(ip, k -> new AtomicInteger(0));
-        if (counter.incrementAndGet() >= suspiciousNameThreshold) {
+        if (counter.incrementAndGet() >= suspiciousNameThreshold && moduleManager != null
+                && moduleManager.getPenalty(DefenseModule.ENTROPY) == com.l7defense.module.PenaltyAction.BAN) {
             blockIpNormalized(ip, "반복 봇 닉네임");
             return true;
         }
@@ -247,16 +293,38 @@ public class SecurityManager {
     }
 
     private void blockIpNormalized(String normalizedIp, String reason) {
+        if (closed || !IpUtils.isLiteral(normalizedIp)) return;
         Boolean previous = blockedIps.asMap().putIfAbsent(normalizedIp, Boolean.TRUE);
         if (previous == null) {
+            if (redisManager != null) redisManager.publishBlock(normalizedIp);
             lifetimeBlockedCount.increment();
             recentBlockEvents.put(blockEventId.incrementAndGet(), normalizedIp);
-            
+
             // 방화벽(iptables) 연동 차단
             if (firewallManager != null) {
-                firewallManager.executeBlock(normalizedIp);
+                firewallManager.executeBlock(normalizedIp, TimeUnit.MINUTES.toMillis(blockDurationMinutes));
             }
         }
+    }
+
+    public void receiveRemoteBlock(String ip) {
+        if (closed || !IpUtils.isLiteral(ip)) return;
+        ip = IpUtils.normalize(ip);
+        if (blockedIps.asMap().putIfAbsent(ip, Boolean.TRUE) == null) {
+            lifetimeBlockedCount.increment();
+            recentBlockEvents.put(blockEventId.incrementAndGet(), ip);
+            if (firewallManager != null) firewallManager.executeBlock(ip, TimeUnit.MINUTES.toMillis(blockDurationMinutes));
+        }
+    }
+
+    public void receiveRemoteUnblock(String rawIp) {
+        if (closed || !IpUtils.isLiteral(rawIp)) return;
+        String ip = IpUtils.normalize(rawIp);
+        blockedIps.invalidate(ip);
+        connectionAttempts.invalidate(ip);
+        pingAttempts.invalidate(ip);
+        suspiciousNameCounter.invalidate(ip);
+        if (firewallManager != null) firewallManager.executeUnblock(ip);
     }
 
     public boolean isBlocked(String rawIp) {
@@ -274,8 +342,9 @@ public class SecurityManager {
         connectionAttempts.invalidate(ip);
         pingAttempts.invalidate(ip);
         suspiciousNameCounter.invalidate(ip);
-        
-        if (wasBlocked && firewallManager != null) {
+
+        if (wasBlocked && redisManager != null) redisManager.publishUnblock(ip);
+        if (firewallManager != null) {
             firewallManager.executeUnblock(ip);
         }
         return wasBlocked;
@@ -283,82 +352,69 @@ public class SecurityManager {
 
     // ── 3. 재접속 검증 (Soft Captcha) ───────────────────────
 
-    public boolean isVerified(String rawIp) {
-        return verifiedIps.getIfPresent(IpUtils.normalize(rawIp)) != null;
+    public boolean isVerified(UUID id) { return verifiedPlayers.getIfPresent(id) != null; }
+
+    public void startVerification(String rawIp, UUID id) {
+        pendingVerification.asMap().putIfAbsent(new VerificationKey(IpUtils.normalize(rawIp), id), System.nanoTime());
     }
 
-    public void startVerification(String rawIp) {
-        pendingVerification.put(IpUtils.normalize(rawIp), System.currentTimeMillis());
-    }
-
-    public VerificationResult checkVerification(String rawIp) {
-        String ip = IpUtils.normalize(rawIp);
-        Long startTime = pendingVerification.getIfPresent(ip);
-        if (startTime == null) return VerificationResult.NEW;
-
-        long elapsed = System.currentTimeMillis() - startTime;
-        if (elapsed < rejoinMinDelay * 1000L) {
-            return VerificationResult.WAITING; // 너무 빠름 (봇 스크립트 특징)
-        } else if (elapsed > rejoinMaxDelay * 1000L) {
-            pendingVerification.invalidate(ip);
-            return VerificationResult.EXPIRED; // 늦음
-        } else {
-            // 검증 성공
-            pendingVerification.invalidate(ip);
-            verifiedIps.put(ip, Boolean.TRUE);
-            return VerificationResult.PASSED;
-        }
+    public VerificationResult checkVerification(String rawIp, UUID id) {
+        VerificationKey key = new VerificationKey(IpUtils.normalize(rawIp), id);
+        java.util.concurrent.atomic.AtomicReference<VerificationResult> result =
+                new java.util.concurrent.atomic.AtomicReference<>(VerificationResult.NEW);
+        pendingVerification.asMap().computeIfPresent(key, (k, start) -> {
+            long elapsed = System.nanoTime() - start;
+            if (elapsed < TimeUnit.SECONDS.toNanos(rejoinMinDelay)) {
+                result.set(VerificationResult.WAITING); // 너무 빠름 (봇 스크립트 특징)
+                return start;
+            }
+            if (elapsed > TimeUnit.SECONDS.toNanos(rejoinMaxDelay)) {
+                result.set(VerificationResult.EXPIRED); // 늦음
+            } else {
+                // 검증 성공: 허용된 단 한 번의 재접속만 기본 접속 횟수에서 제외합니다.
+                result.set(VerificationResult.PASSED);
+                verifiedPlayers.put(id, Boolean.TRUE);
+            }
+            return null;
+        });
+        return result.get();
     }
 
     // ── 4. VPN 및 GeoIP 검사 (v1.4 통합) ───────────────────
-    
-    public boolean isRestrictedGeoIp(String rawIp) {
+
+    public boolean isRestrictedGeoIp(String rawIp, boolean checkVpn, boolean checkForeign) {
         if (geoIpManager == null) return false;
-        return geoIpManager.isRestricted(IpUtils.normalize(rawIp));
+        return geoIpManager.isRestricted(IpUtils.normalize(rawIp), checkVpn, checkForeign);
     }
 
     // ── 4-2. 캡챠 상태 플래그 (v1.4 / v1.5) ────────────────────────────────
 
-    public void flagForGuiCaptcha(String rawIp) {
-        pendingGuiCaptcha.put(IpUtils.normalize(rawIp), Boolean.TRUE);
-    }
-    public boolean needsGuiCaptcha(String rawIp) {
-        return pendingGuiCaptcha.getIfPresent(IpUtils.normalize(rawIp)) != null;
-    }
-    public void passGuiCaptcha(String rawIp) {
-        String ip = IpUtils.normalize(rawIp);
-        pendingGuiCaptcha.invalidate(ip);
-        verifiedIps.put(ip, Boolean.TRUE); 
-    }
-
+    /** 인게임 GUI 캡챠를 통과해야 하는 플레이어 목록 (v1.4) */
     // (v1.5) Resource Pack Captcha 플래그
-    private final Cache<String, Boolean> pendingRpCaptcha = Caffeine.newBuilder().expireAfterWrite(5, TimeUnit.MINUTES).build();
-    public void flagForResourcePackCaptcha(String rawIp) { pendingRpCaptcha.put(IpUtils.normalize(rawIp), Boolean.TRUE); }
-    public boolean needsResourcePackCaptcha(String rawIp) { return pendingRpCaptcha.getIfPresent(IpUtils.normalize(rawIp)) != null; }
-    public void passResourcePackCaptcha(String rawIp) { 
-        String ip = IpUtils.normalize(rawIp);
-        pendingRpCaptcha.invalidate(ip);
-        verifiedIps.put(ip, Boolean.TRUE); 
-    }
-
     // (v1.5) 3D Entity Captcha 플래그
-    private final Cache<String, Boolean> pendingEntityCaptcha = Caffeine.newBuilder().expireAfterWrite(5, TimeUnit.MINUTES).build();
-    public void flagForEntityCaptcha(String rawIp) { pendingEntityCaptcha.put(IpUtils.normalize(rawIp), Boolean.TRUE); }
-    public boolean needsEntityCaptcha(String rawIp) { return pendingEntityCaptcha.getIfPresent(IpUtils.normalize(rawIp)) != null; }
-    public void passEntityCaptcha(String rawIp) { 
-        String ip = IpUtils.normalize(rawIp);
-        pendingEntityCaptcha.invalidate(ip);
-        verifiedIps.put(ip, Boolean.TRUE); 
+    // (v1.6) Map OCR Captcha 플래그
+    public void flagForGuiCaptcha(UUID id) { captchas.flag(id, DefenseModule.GUI_CAPTCHA); }
+    public boolean needsGuiCaptcha(UUID id) { return captchas.needs(id, DefenseModule.GUI_CAPTCHA); }
+    public void passGuiCaptcha(org.bukkit.entity.Player player) {
+        if (captchas.pass(player.getUniqueId(), DefenseModule.GUI_CAPTCHA)) verifiedPlayers.put(player.getUniqueId(), Boolean.TRUE);
     }
 
-    // (v1.6) Map OCR Captcha 플래그
-    private final Cache<String, Boolean> pendingMapCaptcha = Caffeine.newBuilder().expireAfterWrite(5, TimeUnit.MINUTES).build();
-    public void flagForMapCaptcha(String rawIp) { pendingMapCaptcha.put(IpUtils.normalize(rawIp), Boolean.TRUE); }
-    public boolean needsMapCaptcha(String rawIp) { return pendingMapCaptcha.getIfPresent(IpUtils.normalize(rawIp)) != null; }
-    public void passMapCaptcha(String rawIp) { 
-        String ip = IpUtils.normalize(rawIp);
-        pendingMapCaptcha.invalidate(ip);
-        verifiedIps.put(ip, Boolean.TRUE); 
+    public void flagForResourcePackCaptcha(UUID id) { captchas.flag(id, DefenseModule.RP_CAPTCHA); }
+    public boolean needsResourcePackCaptcha(UUID id) { return captchas.needs(id, DefenseModule.RP_CAPTCHA); }
+    public void passResourcePackCaptcha(org.bukkit.entity.Player player) {
+        if (captchas.pass(player.getUniqueId(), DefenseModule.RP_CAPTCHA)) verifiedPlayers.put(player.getUniqueId(), Boolean.TRUE);
+    }
+
+    public void flagForEntityCaptcha(UUID id) { captchas.flag(id, DefenseModule.ENTITY_CAPTCHA); }
+    public boolean needsEntityCaptcha(UUID id) { return captchas.needs(id, DefenseModule.ENTITY_CAPTCHA); }
+    public void passEntityCaptcha(org.bukkit.entity.Player player) {
+        if (captchas.pass(player.getUniqueId(), DefenseModule.ENTITY_CAPTCHA)) verifiedPlayers.put(player.getUniqueId(), Boolean.TRUE);
+    }
+
+    public void flagForMapCaptcha(UUID id) { captchas.flag(id, DefenseModule.MAP_CAPTCHA); }
+    public boolean needsMapCaptcha(UUID id) { return captchas.needs(id, DefenseModule.MAP_CAPTCHA); }
+    public void passMapCaptcha(org.bukkit.entity.Player player) {
+        if (captchas.pass(player.getUniqueId(), DefenseModule.MAP_CAPTCHA)) verifiedPlayers.put(player.getUniqueId(), Boolean.TRUE);
     }
 
     // ── 5. 이벤트 및 공격 상태 평가 ─────────────────────────
@@ -366,6 +422,9 @@ public class SecurityManager {
     private void recordAttempt() {
         recentAttemptEvents.put(attemptEventId.incrementAndGet(), Boolean.TRUE);
     }
+
+    public void recordVerifiedReconnect() { recordAttempt(); }
+    public void recordDeniedConnection() { recordAttempt(); recordDeniedEvent(); }
 
     private void recordDeniedEvent() {
         recentDeniedEvents.put(deniedEventId.incrementAndGet(), Boolean.TRUE);
@@ -392,6 +451,9 @@ public class SecurityManager {
     public void resetStats() {
         lifetimeBlockedCount.reset();
         connectionAttempts.invalidateAll();
+        for (String ip : blockedIps.asMap().keySet()) {
+            if (firewallManager != null) firewallManager.executeUnblock(ip);
+        }
         blockedIps.invalidateAll();
         pingAttempts.invalidateAll();
         recentBlockEvents.invalidateAll();
@@ -400,11 +462,10 @@ public class SecurityManager {
         suspiciousNameCounter.invalidateAll();
         recentPings.invalidateAll();
         pendingVerification.invalidateAll();
-        verifiedIps.invalidateAll();
-        pendingGuiCaptcha.invalidateAll();
-        pendingRpCaptcha.invalidateAll();
-        pendingEntityCaptcha.invalidateAll();
-        pendingMapCaptcha.invalidateAll();
+        verifiedPlayers.invalidateAll();
+        captchas.clear();
+        captchaRetryGranted.invalidateAll();
+        captchaRetries.invalidateAll();
         underAttack = false;
     }
 
@@ -412,38 +473,21 @@ public class SecurityManager {
     public int getConnectionWindowSeconds() { return connectionWindowSeconds; }
     public int getMaxPingsPerWindow() { return maxPingsPerWindow; }
     public int getPingWindowSeconds() { return pingWindowSeconds; }
-        public void scheduleCaptchaTimeout(org.bukkit.entity.Player player, String ip, com.l7defense.module.DefenseModule module) {
-        org.bukkit.plugin.Plugin plugin = org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(getClass());
-        org.bukkit.Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (player != null && player.isOnline()) {
-                boolean stillPending = false;
-                switch (module) {
-                    case GUI_CAPTCHA -> stillPending = needsGuiCaptcha(ip);
-                    case ENTITY_CAPTCHA -> stillPending = needsEntityCaptcha(ip);
-                    case MAP_CAPTCHA -> stillPending = needsMapCaptcha(ip);
-                    case RP_CAPTCHA -> stillPending = needsResourcePackCaptcha(ip);
-                }
-                
-                if (stillPending) {
-                    // 강제 밴 처리
-                    String banReason = "캡챠 30초 타임아웃 미인증";
-                    org.bukkit.Bukkit.getLogger().warning("[L7 Defense] " + player.getName() + " 캡챠 30초 미인증 밴 처리됨.");
-                    getModuleManager().setPenalty(module, com.l7defense.module.PenaltyAction.BAN);
-                    handleViolation(player, module, banReason);
-                }
-            }
-        }, 30L * 20L); // 30초 후 확인
-    }
+    // 30초 후 확인 작업은 각 캡챠 리스너가 발급/재발급/종료 시 함께 관리합니다.
+    // 강제 밴 처리 여부는 모듈의 현재 처벌 설정을 따르며 설정 파일을 변경하지 않습니다.
+    public void shutdown() { closed = true; captchas.clear(); }
+    public boolean isActive() { return !closed; }
 
     public int getBlockDurationMinutes() { return blockDurationMinutes; }
 
     public void simulateTest(org.bukkit.entity.Player player, com.l7defense.module.DefenseModule module) {
-        String ip = com.l7defense.util.IpUtils.getIp(player);
+        UUID id = player.getUniqueId();
         com.l7defense.module.PenaltyAction penalty = getModuleManager().getPenalty(module);
 
                 org.bukkit.plugin.Plugin plugin = org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(getClass());
         if (plugin == null) return;
         org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
+            if (closed || !player.isOnline()) return;
             org.bukkit.Bukkit.getLogger().warning("[L7-Notify] " + player.getName() + " - " + module.getId() + " 테스트");
             for (org.bukkit.entity.Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
                 if (p.isOp()) {
@@ -455,26 +499,26 @@ public class SecurityManager {
             org.bukkit.Bukkit.getLogger().info("[L7-Debug] Scheduler Started for: " + module.getId());
             switch (module) {
                 case GUI_CAPTCHA -> {
-                    flagForGuiCaptcha(ip);
+                    captchas.start(id, module);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] GUI 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
                     org.bukkit.Bukkit.getLogger().info("[L7-Debug] guiCaptchaTrigger is " + (guiCaptchaTrigger != null ? "READY" : "NULL"));
-                    if (guiCaptchaTrigger != null) { guiCaptchaTrigger.accept(player); scheduleCaptchaTimeout(player, ip, module); }
+                    if (guiCaptchaTrigger != null) { guiCaptchaTrigger.accept(player); }
                 }
                 case ENTITY_CAPTCHA -> {
-                    flagForEntityCaptcha(ip);
+                    captchas.start(id, module);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] 3D Entity 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
                     org.bukkit.Bukkit.getLogger().info("[L7-Debug] entityCaptchaTrigger is " + (entityCaptchaTrigger != null ? "READY" : "NULL"));
-                    if (entityCaptchaTrigger != null) { entityCaptchaTrigger.accept(player); scheduleCaptchaTimeout(player, ip, module); }
+                    if (entityCaptchaTrigger != null) { entityCaptchaTrigger.accept(player); }
                 }
                 case RP_CAPTCHA -> {
-                    flagForResourcePackCaptcha(ip);
+                    captchas.start(id, module);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] 리소스팩 캡챠 발동! (리소스팩 적용은 클라이언트 접속 시에만 가능하여 재접속이 필요합니다.)", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
                 }
                 case MAP_CAPTCHA -> {
-                    flagForMapCaptcha(ip);
+                    captchas.start(id, module);
                     player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7] Map OCR 캡챠 발동!", net.kyori.adventure.text.format.NamedTextColor.YELLOW));
                     org.bukkit.Bukkit.getLogger().info("[L7-Debug] mapCaptchaTrigger is " + (mapCaptchaTrigger != null ? "READY" : "NULL"));
-                    if (mapCaptchaTrigger != null) { mapCaptchaTrigger.accept(player); scheduleCaptchaTimeout(player, ip, module); }
+                    if (mapCaptchaTrigger != null) { mapCaptchaTrigger.accept(player); }
                 }
                 default -> {
                     if (penalty == com.l7defense.module.PenaltyAction.KICK) {

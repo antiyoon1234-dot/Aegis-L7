@@ -24,12 +24,13 @@ import java.util.regex.Pattern;
 public final class ChatAiListener implements Listener {
 
     private final SecurityManager securityManager;
-    
+
     // 글로벌(서버 전체) 최근 채팅 5개를 보관하여 봇넷 단위의 다중 계정 도배를 감지합니다.
     private final Cache<Long, String> globalRecentChats;
-    
+
     // 유저 개인별 최근 채팅 캐시 (짧은 시간 내 연속 채팅 방지)
     private final Cache<String, String> userRecentChats;
+    private final java.util.concurrent.atomic.AtomicLong messageId = new java.util.concurrent.atomic.AtomicLong();
 
     public ChatAiListener(SecurityManager securityManager) {
         this.securityManager = securityManager;
@@ -37,13 +38,20 @@ public final class ChatAiListener implements Listener {
         this.userRecentChats = Caffeine.newBuilder().expireAfterWrite(10, TimeUnit.SECONDS).maximumSize(1000).build();
     }
 
-    @EventHandler(priority = EventPriority.LOW)
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onPlayerChat(AsyncPlayerChatEvent event) {
         if (!securityManager.getModuleManager().isEnabled(DefenseModule.CHAT_AI)) return;
 
         Player player = event.getPlayer();
         String message = event.getMessage();
-        String ip = IpUtils.getIp(player);
+        var session = securityManager.getSessions().get(player);
+        if (session == null) return;
+        String ip = session.id().toString(); // 개인 도배는 공유 IP가 아닌 플레이어별 집계
+        if (message.length() > 256) {
+            event.setCancelled(true);
+            securityManager.handleViolation(player, DefenseModule.EXPLOIT_CRASHER, "비정상적 채팅 길이");
+            return;
+        }
 
         // 1. 악성 렌더링 크래시 방어 (RTL Override 특수문자 차단)
         // \u202E, \u202D 등은 마인크래프트 채팅창 렌더링을 터뜨리거나 반전시킵니다.
@@ -55,7 +63,7 @@ public final class ChatAiListener implements Listener {
 
         // 2. 메시지 유사도 (머신러닝) 분석
         String normalizedMsg = normalizeForAnalysis(message);
-        
+
         // 너무 짧은 채팅은 유사도 분석에서 제외
         if (normalizedMsg.length() < 5) return;
 
@@ -69,7 +77,7 @@ public final class ChatAiListener implements Listener {
                 return;
             }
         }
-        
+
         // 글로벌 봇넷 도배 검사 (서로 다른 봇들이 비슷한 말을 계속 올리는가?)
         int similarCount = 0;
         for (String pastMsg : globalRecentChats.asMap().values()) {
@@ -78,7 +86,7 @@ public final class ChatAiListener implements Listener {
                 similarCount++;
             }
         }
-        
+
         // 3명(번) 이상이 최근 30초 내에 80% 이상 유사한 문장을 썼다면 봇넷 스팸 공격으로 간주
         if (similarCount >= 2) {
             event.setCancelled(true);
@@ -88,7 +96,7 @@ public final class ChatAiListener implements Listener {
 
         // 정상 채팅 통과 시 캐시에 기록
         userRecentChats.put(ip, normalizedMsg);
-        globalRecentChats.put(System.currentTimeMillis(), normalizedMsg);
+        globalRecentChats.put(messageId.incrementAndGet(), normalizedMsg);
     }
 
     /**
@@ -105,7 +113,7 @@ public final class ChatAiListener implements Listener {
     private double calculateSimilarity(String s1, String s2) {
         int maxLen = Math.max(s1.length(), s2.length());
         if (maxLen == 0) return 1.0;
-        
+
         int distance = computeLevenshteinDistance(s1, s2);
         return 1.0 - ((double) distance / maxLen);
     }

@@ -56,6 +56,12 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        if (args[0].equalsIgnoreCase("reload")) {
+            boolean reloaded = ((com.l7defense.L7DefensePlugin) plugin).reloadPlugin();
+            sender.sendMessage(reloaded ? "§a[L7] 설정을 다시 불러왔습니다." : "§c[L7] 잘못된 설정입니다. 기존 방어를 유지합니다. 콘솔을 확인해주세요.");
+            return true;
+        }
+
         if (args[0].equalsIgnoreCase("status")) {
             sender.sendMessage("§b[L7 방어 시스템 상태]");
             sender.sendMessage("§7현재 차단된 캐시 IP 수: §f" + securityManager.getBlockedCount());
@@ -131,7 +137,7 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage("§c존재하지 않는 모듈입니다.");
                 return true;
             }
-            
+
             try {
                 PenaltyAction action = PenaltyAction.valueOf(args[2].toUpperCase());
                 securityManager.getModuleManager().setPenalty(mod, action);
@@ -156,6 +162,7 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             completions.add("toggle");
             completions.add("penalty");
             completions.add("test");
+            completions.add("reload");
         } else if (args.length == 2 && (args[0].equalsIgnoreCase("toggle") || args[0].equalsIgnoreCase("penalty") || args[0].equalsIgnoreCase("test"))) {
             for (DefenseModule mod : DefenseModule.values()) {
                 completions.add(mod.getId());

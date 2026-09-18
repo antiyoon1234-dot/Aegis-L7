@@ -23,32 +23,33 @@ import java.util.*;
  * 1. 투명 NPC 허니팟: 킬아우라(Combat Bot) 강제 적발
  * 2. 매크로 주파수 분석기: 오토클리커 기계적 클릭 간격 감지
  */
-public class OffensiveDefenseListener implements Listener {
+public class OffensiveDefenseListener implements Listener, AutoCloseable {
 
     private final SecurityManager securityManager;
     private final Plugin plugin;
+    private final org.bukkit.scheduler.BukkitTask spawnTask;
 
     // 허니팟 가짜 엔티티 UUID 추적 (스레드 세이프)
     private final Set<UUID> honeypotEntities = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    
+
     // 매크로 감지용 플레이어별 클릭 타임스탬프 (최근 15번)
     private final Map<UUID, Queue<Long>> clickHistory = new java.util.concurrent.ConcurrentHashMap<>();
 
     public OffensiveDefenseListener(SecurityManager securityManager, Plugin plugin) {
         this.securityManager = securityManager;
         this.plugin = plugin;
-        
+
         // 5초마다 일부 유저에게 무작위로 투명 허니팟 테스트 진행
-        Bukkit.getScheduler().runTaskTimer(plugin, this::spawnRandomHoneypots, 100L, 100L);
+        spawnTask = Bukkit.getScheduler().runTaskTimer(plugin, this::spawnRandomHoneypots, 100L, 100L);
     }
 
     /* -----------------------------------------------------
      * 1. HONEYPOT (투명 NPC 킬아우라 함정)
      * ----------------------------------------------------- */
-    
+
     private void spawnRandomHoneypots() {
         if (!securityManager.getModuleManager().isEnabled(DefenseModule.HONEYPOT)) return;
-        
+
         for (Player p : Bukkit.getOnlinePlayers()) {
             // 20% 확률로 킬아우라 테스트 (너무 자주 소환하면 서버 부하)
             if (Math.random() < 0.2) {
@@ -59,9 +60,10 @@ public class OffensiveDefenseListener implements Listener {
 
     private void spawnHoneypot(Player target) {
         // 플레이어 시야 뒤쪽(또는 위쪽)에 보이지 않는 박쥐를 1틱 소환
-        Location loc = target.getLocation().add(0, 3, 0); 
-        
+        Location loc = target.getLocation().add(0, 3, 0);
+
         target.getWorld().spawn(loc, Bat.class, bat -> {
+            bat.setPersistent(false);
             bat.setInvisible(true);
             bat.setInvulnerable(false); // 맞을 수 있어야 함
             bat.setSilent(true);
@@ -69,9 +71,9 @@ public class OffensiveDefenseListener implements Listener {
             bat.setGravity(false);
             bat.setCustomName("L7_HONEYPOT");
             bat.setCustomNameVisible(false);
-            
+
             honeypotEntities.add(bat.getUniqueId());
-            
+
             // 1틱(0.05초) 뒤에 바로 삭제 (인간은 절대 반응/클릭 불가능, 킬아우라는 즉시 타격)
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 if (bat.isValid()) bat.remove();
@@ -104,10 +106,10 @@ public class OffensiveDefenseListener implements Listener {
 
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
-        
+
         Queue<Long> clicks = clickHistory.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
         clicks.add(System.currentTimeMillis());
-        
+
         if (clicks.size() > 15) {
             clicks.poll(); // 최근 15개 유지
             analyzeMacro(player, new ArrayList<>(clicks));
@@ -138,16 +140,32 @@ public class OffensiveDefenseListener implements Listener {
         // 사람이 마우스를 클릭하면 표준편차가 보통 10~30 이상 발생함.
         // 표준편차가 3.0 이하라면 정확한 ms 간격으로 클릭하는 기계/매크로/오토클리커임.
         if (stdDev < 3.0 && mean < 150) { // 클릭 속도도 빠르면서(150ms 미만) 오차가 거의 없는 경우
-            securityManager.handleViolation(player, DefenseModule.MACRO_CHECK, 
-                    String.format("오토클리커/매크로 감지 (표준편차: %.2fms)", stdDev));
-            
+            String reason = String.format("오토클리커/매크로 감지 (표준편차: %.2fms)", stdDev);
+            // 틱 지연으로 입력이 한꺼번에 처리된 경우도 검증하되 즉시 밴하지 않습니다.
+            if (mean < 25) securityManager.challengeHeuristic(player, DefenseModule.MACRO_CHECK, reason);
+            else securityManager.handleViolation(player, DefenseModule.MACRO_CHECK, reason);
+
             // 기록 초기화 (계속 밴 이벤트 발생하는 것 방지)
-            clickHistory.get(player.getUniqueId()).clear();
+            clicksClear(player.getUniqueId());
         }
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         clickHistory.remove(event.getPlayer().getUniqueId());
+    }
+    private void clicksClear(UUID id) {
+        Queue<Long> clicks = clickHistory.get(id);
+        if (clicks != null) clicks.clear();
+    }
+
+    @Override public void close() {
+        spawnTask.cancel();
+        for (UUID id : honeypotEntities) {
+            var entity = Bukkit.getEntity(id);
+            if (entity != null) entity.remove();
+        }
+        honeypotEntities.clear();
+        clickHistory.clear();
     }
 }

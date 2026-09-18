@@ -1,5 +1,4 @@
 package com.l7defense.listener;
-import com.l7defense.util.IpUtils;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -19,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 포스트-로그인 패킷 스팸(Server Crusher) 방어 리스너.
  * <p>
- * 캡챠를 뚫고 들어온 악성 봇이 인벤토리 클릭, 상호작용 등을 
+ * 캡챠를 뚫고 들어온 악성 봇이 인벤토리 클릭, 상호작용 등을
  * 초당 수십/수백 번 전송하여 서버 틱을 저하시키는 것을 방지합니다.
  */
 public final class PacketSpamListener implements Listener {
@@ -27,7 +26,7 @@ public final class PacketSpamListener implements Listener {
     private final SecurityManager securityManager;
     private final boolean enabled;
     private final int maxActionsPerSecond;
-    
+
     // 1초 단위로 플레이어의 행동 횟수를 캐싱
     private final Cache<String, AtomicInteger> actionCache;
 
@@ -43,15 +42,14 @@ public final class PacketSpamListener implements Listener {
     }
 
     private boolean checkSpam(Player player) {
-        if (!enabled || player.hasPermission("l7defense.admin")) return false;
+        if (!enabled || !securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PACKET_SPAM)
+                || player.hasPermission("l7defense.admin")) return false;
 
-        String ip = IpUtils.getIp(player);
-        AtomicInteger count = actionCache.get(ip, k -> new AtomicInteger(0));
-        
+        AtomicInteger count = actionCache.get(player.getUniqueId().toString(), k -> new AtomicInteger(0));
+
         if (count.incrementAndGet() > maxActionsPerSecond) {
             // 패킷 플러드 감지 -> 즉시 킥 및 IP 차단
-            securityManager.blockIp(ip, "인게임 패킷 스팸 (CPS 초과)");
-            player.kick(Component.text("비정상적인 속도의 패킷이 감지되었습니다.", NamedTextColor.RED));
+            securityManager.handleViolation(player, com.l7defense.module.DefenseModule.PACKET_SPAM, "인게임 패킷 스팸 (CPS 초과)");
             return true;
         }
         return false;

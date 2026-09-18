@@ -1,5 +1,4 @@
 package com.l7defense.listener;
-import com.l7defense.util.IpUtils;
 
 import com.l7defense.manager.SecurityManager;
 import net.kyori.adventure.text.Component;
@@ -29,17 +28,19 @@ import java.util.concurrent.ConcurrentHashMap;
  * 플레이어 시야 근처에 투명한 아머스탠드(초록색 블록을 쓴 형태)를 소환합니다.
  * 이 아머스탠드를 정확하게 조준하고 타격(Attack)해야 통과합니다.
  */
-public final class EntityCaptchaListener implements Listener {
+public final class EntityCaptchaListener implements Listener, AutoCloseable {
 
     private final Plugin plugin;
     private final SecurityManager securityManager;
     private final boolean enabled;
-    
+
     // 유저 UUID -> 생성된 캡챠 아머스탠드 UUID
-    private final ConcurrentHashMap<UUID, UUID> captchaEntities = new ConcurrentHashMap<>();
+    private final java.util.Map<UUID, ArmorStand> captchaEntities = new java.util.HashMap<>();
+    private final com.l7defense.util.PlayerTasks tasks;
 
     public EntityCaptchaListener(Plugin plugin, SecurityManager securityManager, boolean enabled) {
         this.plugin = plugin;
+        this.tasks = new com.l7defense.util.PlayerTasks(plugin);
         this.securityManager = securityManager;
         this.enabled = enabled;
     }
@@ -47,77 +48,105 @@ public final class EntityCaptchaListener implements Listener {
     @EventHandler(priority = EventPriority.NORMAL)
     public void onPlayerJoin(PlayerJoinEvent event) {
         if (!enabled) return;
-        
+
         Player player = event.getPlayer();
-        String ip = IpUtils.getIp(player);
+
 
         // SecurityManager가 3D 캡챠를 지시했거나 공격 상태일 때 랜덤 샘플링
-        if (securityManager.needsEntityCaptcha(ip)) {
-            Bukkit.getScheduler().runTaskLater(plugin, () -> spawnCaptchaEntity(player), 20L);
+        if (securityManager.needsEntityCaptcha(player.getUniqueId())) {
+            tasks.later(player, "open", 20L, () -> spawnCaptchaEntity(player));
         }
     }
 
     public void spawnCaptchaEntity(Player player) {
-        if (!player.isOnline()) return;
+        if (!player.isOnline() || !securityManager.needsEntityCaptcha(player.getUniqueId())) return;
+        remove(player.getUniqueId());
         Location loc = player.getLocation().add(0, 1.5, 0).add(player.getLocation().getDirection().multiply(2.0));
-        
-        ArmorStand stand = (ArmorStand) player.getWorld().spawnEntity(loc, EntityType.ARMOR_STAND);
+
+        ArmorStand stand;
+        try {
+            stand = (ArmorStand) player.getWorld().spawnEntity(loc, EntityType.ARMOR_STAND);
+        } catch (RuntimeException ex) {
+            plugin.getLogger().warning("[L7] 3D 캡챠 생성 실패: " + ex.getMessage());
+            retryUnavailable(player);
+            return;
+        }
+        if (!stand.isValid()) {
+            stand.remove();
+            retryUnavailable(player);
+            return;
+        }
         stand.setVisible(false);
         stand.setGravity(false);
-        stand.setInvulnerable(true);
+        stand.setInvulnerable(false);
+        stand.setPersistent(false);
+        stand.setCollidable(false);
         stand.getEquipment().setHelmet(new ItemStack(Material.LIME_CONCRETE));
         stand.customName(Component.text("클릭하여 봇 방지 통과", NamedTextColor.GREEN));
         stand.setCustomNameVisible(true);
 
-        captchaEntities.put(player.getUniqueId(), stand.getUniqueId());
+        captchaEntities.put(player.getUniqueId(), stand);
         player.sendMessage(Component.text("눈앞의 초록색 블록(엔티티)을 좌클릭하여 타격하세요!", NamedTextColor.RED));
 
         // 15초 제한 타이머
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (captchaEntities.containsKey(player.getUniqueId())) {
-                UUID standId = captchaEntities.remove(player.getUniqueId());
-                if (standId != null) {
-                    org.bukkit.entity.Entity e = Bukkit.getEntity(standId);
-                    if (e != null) e.remove();
-                }
-                
-                if (player.isOnline()) {
-                    String ip = IpUtils.getIp(player);
-                    securityManager.blockIp(ip, "3D 캡챠 타임아웃");
-                    player.kick(Component.text("캡챠 인증 시간 초과. 다시 접속해주세요.", NamedTextColor.RED));
-                }
-            }
-        }, 20L * 15L);
+        tasks.later(player, "timeout", 20L * 15L, () -> {
+            if (captchaEntities.get(player.getUniqueId()) != stand) return;
+            remove(player.getUniqueId());
+            securityManager.handleViolation(player, com.l7defense.module.DefenseModule.ENTITY_CAPTCHA, "3D 캡챠 타임아웃");
+            tasks.later(player, "retry", 20L, () -> spawnCaptchaEntity(player));
+        });
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onEntityDamage(EntityDamageByEntityEvent event) {
         if (!enabled) return;
-        
+
         if (event.getDamager() instanceof Player player) {
-            UUID targetId = captchaEntities.get(player.getUniqueId());
-            
+            ArmorStand target = captchaEntities.get(player.getUniqueId());
+
             // 때린 엔티티가 플레이어에게 할당된 캡챠 엔티티인지 확인
-            if (targetId != null && event.getEntity().getUniqueId().equals(targetId)) {
+            if (target != null && event.getEntity().getUniqueId().equals(target.getUniqueId())) {
                 event.setCancelled(true);
-                
-                String ip = IpUtils.getIp(player);
-                securityManager.passEntityCaptcha(ip);
-                
+
+                securityManager.passEntityCaptcha(player);
+
                 player.sendMessage(Component.text("봇 방지 시스템을 통과했습니다!", NamedTextColor.GREEN));
-                
-                captchaEntities.remove(player.getUniqueId());
-                event.getEntity().remove();
+
+                remove(player.getUniqueId());
             }
         }
     }
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        UUID standId = captchaEntities.remove(event.getPlayer().getUniqueId());
-        if (standId != null) {
-            org.bukkit.entity.Entity e = Bukkit.getEntity(standId);
-            if (e != null) e.remove();
-        }
+        remove(event.getPlayer().getUniqueId());
+    }
+
+    private void remove(UUID id) {
+        tasks.cancel(id);
+        ArmorStand stand = captchaEntities.remove(id);
+        if (stand != null) stand.remove();
+    }
+
+    private void retryUnavailable(Player player) {
+        securityManager.offerCaptchaRetry(player);
+        player.kick(Component.text("캡챠를 생성할 수 없습니다. 잠시 후 다시 접속해주세요.", NamedTextColor.RED));
+        tasks.later(player, "retry", 20L, () -> spawnCaptchaEntity(player));
+    }
+
+    @EventHandler
+    public void protect(org.bukkit.event.entity.EntityDamageEvent event) {
+        if (captchaEntities.containsValue(event.getEntity())) event.setCancelled(true);
+    }
+
+    @EventHandler
+    public void protectEquipment(org.bukkit.event.player.PlayerInteractEntityEvent event) {
+        if (captchaEntities.containsValue(event.getRightClicked())) event.setCancelled(true);
+    }
+
+    @Override public void close() {
+        tasks.close();
+        captchaEntities.values().forEach(ArmorStand::remove);
+        captchaEntities.clear();
     }
 }

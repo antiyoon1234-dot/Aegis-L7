@@ -21,34 +21,38 @@ public final class MovementHeuristicsListener implements Listener {
 
     private final SecurityManager securityManager;
     private final boolean enabled;
+    private final com.github.benmanes.caffeine.cache.Cache<java.util.UUID, Integer> evidence =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().expireAfterWrite(5, java.util.concurrent.TimeUnit.SECONDS).maximumSize(10_000).build();
 
     public MovementHeuristicsListener(SecurityManager securityManager, boolean enabled) {
         this.securityManager = securityManager;
         this.enabled = enabled;
     }
 
-    @EventHandler(priority = EventPriority.LOWEST)
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerMove(PlayerMoveEvent event) {
-        if (!enabled) return;
+        if (!enabled || !securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.MOVEMENT)) return;
+        if (event instanceof org.bukkit.event.player.PlayerTeleportEvent || event.getTo() == null) return;
 
         Player player = event.getPlayer();
         if (player.hasPermission("l7defense.admin")) return;
 
         Location from = event.getFrom();
         Location to = event.getTo();
-        
+        if (from.getWorld() != to.getWorld() || !Float.isFinite(to.getYaw()) || !Float.isFinite(to.getPitch())) return;
+
         // 시점 이동이 있는 경우
         if (from.getYaw() != to.getYaw() || from.getPitch() != to.getPitch()) {
-            float deltaYaw = Math.abs(to.getYaw() - from.getYaw());
+            float deltaYaw = yawDifference(from.getYaw(), to.getYaw());
             float deltaPitch = Math.abs(to.getPitch() - from.getPitch());
-            
+
             // 휴리스틱 1: 스냅 에임(Snap Aim) 방어
             // 1틱(0.05초)만에 시점을 180도 이상 정확하게 휙 꺾는 경우 (사람은 불가능에 가까움)
             if (deltaYaw > 175.0f && deltaYaw < 185.0f && deltaPitch == 0.0f) {
                 flagBot(player, "기계적인 시점 이동 감지 (Snap Aim)");
                 return;
             }
-            
+
             // 휴리스틱 2: 완벽한 정수 Pitch 고정 (Baritone이나 싸구려 봇의 특징)
             // 보통 사람의 마우스 센서는 float 소수점 이하 단위로 계속 떨림(Jitter)이 발생함
             float p = to.getPitch();
@@ -63,8 +67,15 @@ public final class MovementHeuristicsListener implements Listener {
     }
 
     private void flagBot(Player player, String reason) {
-        String ip = IpUtils.getIp(player);
-        securityManager.blockIp(ip, reason);
-        player.kick(Component.text("비정상적인 움직임이 감지되었습니다.", NamedTextColor.RED));
+        int count = evidence.asMap().merge(player.getUniqueId(), 1, Integer::sum);
+        if (count < 3) return;
+        evidence.invalidate(player.getUniqueId());
+        // 정상 마우스 이동도 같은 각도를 만들 수 있으므로 반복 신호는 캡챠로 확인합니다.
+        securityManager.challengeHeuristic(player, com.l7defense.module.DefenseModule.MOVEMENT, reason);
     }
+    static float yawDifference(float from, float to) {
+        return Math.abs((float) Math.IEEEremainder((double) to - from, 360.0));
+    }
+
+    @EventHandler public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) { evidence.invalidate(event.getPlayer().getUniqueId()); }
 }

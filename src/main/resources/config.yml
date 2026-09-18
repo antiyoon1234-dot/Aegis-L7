@@ -115,3 +115,8 @@ whitelist:
     # - "127.0.0.1"
 proxy:
   enabled: false
+
+# 기본 검증 팩은 저장소에 포함된 빈 팩입니다. 자체 CDN을 사용하려면 URL과 실제 SHA-1을 함께 지정하세요.
+captcha:
+  resource-pack-url: "https://raw.githubusercontent.com/antiyoon1234-dot/Aegis-L7/main/src/main/resources/captcha/verification-v1.zip"
+  resource-pack-sha1: "e47b740c54f7192c31c63f4cb7d30b9818d2adc1"

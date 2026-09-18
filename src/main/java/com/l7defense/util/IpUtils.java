@@ -39,11 +39,27 @@ public final class IpUtils {
         if (rawIp == null || rawIp.isBlank()) {
             return rawIp;
         }
+        if (!isLiteral(rawIp)) return rawIp;
         try {
             return InetAddress.getByName(rawIp).getHostAddress();
         } catch (UnknownHostException e) {
             return rawIp;
         }
+    }
+
+    public static boolean isLiteral(String value) {
+        if (value == null || value.isBlank()) return false;
+        // 호스트 이름을 InetAddress에 넘기면 동기 DNS 조회가 발생합니다.
+        if (value.indexOf(':') >= 0 && value.matches("[0-9a-fA-F:.]+")) {
+            try { InetAddress.getByName(value); return true; }
+            catch (UnknownHostException ex) { return false; }
+        }
+        String[] parts = value.split("\\.", -1);
+        if (parts.length != 4) return false;
+        for (String part : parts) {
+            if (!part.matches("[0-9]{1,3}") || Integer.parseInt(part) > 255) return false;
+        }
+        return true;
     }
 
     /**
@@ -60,8 +76,7 @@ public final class IpUtils {
 
     /** Player에서 null-safe IP 추출 */
     public static String getIp(org.bukkit.entity.Player player) {
-        if (player == null || player.getAddress() == null) return "unknown";
-        return normalize(player.getAddress().getAddress().getHostAddress());
+        return player == null ? "unknown" : getIp(player.getAddress());
     }
 
     /** InetSocketAddress에서 null-safe IP 추출 */

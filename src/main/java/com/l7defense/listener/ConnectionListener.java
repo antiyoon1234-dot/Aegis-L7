@@ -44,6 +44,9 @@ public final class ConnectionListener implements Listener {
     private final List<String> allowedDomains;
     private final boolean vpnEnabled;
     private final boolean vpnOnlyUnderAttack;
+    private final com.github.benmanes.caffeine.cache.Cache<AsyncPlayerPreLoginEvent, com.l7defense.module.DefenseModule> assignments =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().weakKeys().maximumSize(10_000)
+                    .expireAfterWrite(1, java.util.concurrent.TimeUnit.MINUTES).build();
 
     private static final Pattern NUMERIC_IP_PATTERN = Pattern.compile("^[0-9.]+(:[0-9]+)?$");
 
@@ -100,7 +103,7 @@ public final class ConnectionListener implements Listener {
         this.nameBypassAll = nameBypassAll;
         this.whitelistedPlayers = whitelistedPlayers;
         this.whitelistedIps = whitelistedIps;
-        
+
         this.pingBeforeJoin = pingBeforeJoin;
         this.pingOnlyUnderAttack = pingOnlyUnderAttack;
         this.rejoinVerification = rejoinVerification;
@@ -113,9 +116,14 @@ public final class ConnectionListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onAsyncPreLogin(AsyncPlayerPreLoginEvent event) {
+        if (!securityManager.isActive()) {
+            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, KICK_VERIFY_NEW);
+            return;
+        }
+        if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
         String ip = IpUtils.normalize(event.getAddress().getHostAddress());
         String playerName = event.getName();
-        String hostname = event.getHostname(); // 클라이언트가 입력한 주소
+        String hostname = com.l7defense.util.Hostnames.normalize(event.getHostname()); // 클라이언트가 입력한 주소
 
         // ── 0. 화이트리스트 ───────────────────────────────
         if (whitelistedIps.contains(ip)) return;
@@ -128,20 +136,25 @@ public final class ConnectionListener implements Listener {
 
         // ── 1. 하드 차단 검사 ─────────────────────────────
         if (securityManager.isBlocked(ip)) {
+            securityManager.recordDeniedConnection();
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_BANNED, KICK_BLOCKED_IP);
             return;
         }
 
         // ── 2. 호스트네임 검증 (포트스캐닝 봇 차단) ────────
+        if (hostValidation && (hostname == null || hostname.isBlank())) {
+            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, KICK_INVALID_HOST);
+            return;
+        }
         if (hostValidation && hostname != null) {
-            boolean isNumeric = NUMERIC_IP_PATTERN.matcher(hostname).matches();
+            boolean isNumeric = IpUtils.isLiteral(hostname);
             if (isNumeric && hostBlockNumeric) {
                 event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, KICK_INVALID_HOST);
                 logger.fine("[L7] 숫자 IP 접속 차단: " + ip);
                 return;
             }
             if (!allowedDomains.isEmpty() && !isNumeric) {
-                boolean match = allowedDomains.stream().anyMatch(d -> hostname.toLowerCase().contains(d.toLowerCase()));
+                boolean match = allowedDomains.stream().anyMatch(d -> com.l7defense.util.Hostnames.matches(hostname, d));
                 if (!match) {
                     event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, KICK_INVALID_HOST);
                     return;
@@ -150,7 +163,10 @@ public final class ConnectionListener implements Listener {
         }
 
         // ── 3. 기본 빈도 제한 (Rate Limiting) ─────────────
-        if (securityManager.recordAndCheckConnection(ip)) {
+        SecurityManager.VerificationResult retry = rejoinVerification
+                ? securityManager.checkVerification(ip, event.getUniqueId()) : SecurityManager.VerificationResult.NEW;
+        if (retry == SecurityManager.VerificationResult.PASSED) securityManager.recordVerifiedReconnect();
+        if (retry != SecurityManager.VerificationResult.PASSED && securityManager.recordAndCheckConnection(ip, event.getUniqueId())) {
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, KICK_RATE_LIMITED);
             securityManager.evaluateAttackStatus();
             return;
@@ -162,7 +178,7 @@ public final class ConnectionListener implements Listener {
         String verifyReason = "";
 
         // 이미 검증된 유저면 아래 휴리스틱 패스
-        if (securityManager.isVerified(ip)) {
+        if (securityManager.isVerified(event.getUniqueId())) {
             needsVerification = false;
         } else {
             // ── 3.5 Geyser/Floodgate 베드락 우회 방어 (v1.7) ───────────
@@ -180,7 +196,7 @@ public final class ConnectionListener implements Listener {
             }
 
             // ── 4. Ping-before-Join 검사 ──────────────────
-        if (securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PING) && (!pingOnlyUnderAttack || securityManager.isUnderAttack())) {
+        if (pingBeforeJoin && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PING) && (!pingOnlyUnderAttack || securityManager.isUnderAttack())) {
             if (!securityManager.hasPingedRecently(ip)) {
                 needsVerification = true;
                 verifyReason = "Ping 기록 없음";
@@ -193,7 +209,7 @@ public final class ConnectionListener implements Listener {
         }
 
         // ── 5. 봇 닉네임 필터 (v1.4 엔트로피 추가) ──────
-        if (!needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.ENTROPY) && !nameWhitelisted) {
+        if (botFilterEnabled && !needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.ENTROPY) && !nameWhitelisted) {
             if (com.l7defense.util.NameEntropyChecker.isRandomBotName(playerName)) {
                 securityManager.recordSuspiciousName(ip);
                 needsVerification = true;
@@ -207,8 +223,8 @@ public final class ConnectionListener implements Listener {
         }
 
         // ── 6. GeoIP & Anti-VPN 필터 (v1.4) ─────────────
-        if (!needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.VPN) && (!vpnOnlyUnderAttack || securityManager.isUnderAttack())) {
-            if (securityManager.isRestrictedGeoIp(ip)) {
+        if (!needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.VPN)) {
+            if (securityManager.isRestrictedGeoIp(ip, vpnEnabled && (!vpnOnlyUnderAttack || isAttack), isAttack)) {
                 needsVerification = true;
                 forceGuiCaptcha = true;
                 verifyReason = "제한된 국가/VPN/데이터센터";
@@ -218,24 +234,33 @@ public final class ConnectionListener implements Listener {
                 }
             }
         }
-        
+
         } // end of !isVerified else block
 
         // ── 7. 검증 로직 라우팅 (v1.5/v1.6 Endgame Captcha Routing) ──
         if (needsVerification) {
             if (forceGuiCaptcha) {
-                int captchaType = (int) (Math.random() * 4);
+                java.util.List<com.l7defense.module.DefenseModule> available = new java.util.ArrayList<>();
+                for (var candidate : new com.l7defense.module.DefenseModule[] {
+                        com.l7defense.module.DefenseModule.RP_CAPTCHA, com.l7defense.module.DefenseModule.ENTITY_CAPTCHA,
+                        com.l7defense.module.DefenseModule.MAP_CAPTCHA, com.l7defense.module.DefenseModule.GUI_CAPTCHA}) {
+                    if (securityManager.getModuleManager().isEnabled(candidate)) available.add(candidate);
+                }
+                var chosen = available.isEmpty() ? null : available.get(java.util.concurrent.ThreadLocalRandom.current().nextInt(available.size()));
+                int captchaType = chosen == com.l7defense.module.DefenseModule.RP_CAPTCHA ? 0
+                        : chosen == com.l7defense.module.DefenseModule.ENTITY_CAPTCHA ? 1
+                        : chosen == com.l7defense.module.DefenseModule.MAP_CAPTCHA ? 2 : 3;
                 if (captchaType == 0 && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.RP_CAPTCHA)) {
-                    securityManager.flagForResourcePackCaptcha(ip);
+                    assignments.put(event, com.l7defense.module.DefenseModule.RP_CAPTCHA);
                     logger.info("[L7] 캡챠 배정(RP) (" + verifyReason + "): " + playerName);
                 } else if (captchaType == 1 && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.ENTITY_CAPTCHA)) {
-                    securityManager.flagForEntityCaptcha(ip);
+                    assignments.put(event, com.l7defense.module.DefenseModule.ENTITY_CAPTCHA);
                     logger.info("[L7] 캡챠 배정(3D) (" + verifyReason + "): " + playerName);
                 } else if (captchaType == 2 && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.MAP_CAPTCHA)) {
-                    securityManager.flagForMapCaptcha(ip);
+                    assignments.put(event, com.l7defense.module.DefenseModule.MAP_CAPTCHA);
                     logger.info("[L7] 캡챠 배정(MAP) (" + verifyReason + "): " + playerName);
                 } else if (securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.GUI_CAPTCHA)) {
-                    securityManager.flagForGuiCaptcha(ip);
+                    assignments.put(event, com.l7defense.module.DefenseModule.GUI_CAPTCHA);
                     logger.info("[L7] 캡챠 배정(GUI) (" + verifyReason + "): " + playerName);
                 } else {
                     // 모두 비활성화되어있으면 통과
@@ -246,7 +271,7 @@ public final class ConnectionListener implements Listener {
 
             // 기본 소프트 캡챠 (Rejoin Verification)
             if (rejoinVerification) {
-                SecurityManager.VerificationResult result = securityManager.checkVerification(ip);
+                SecurityManager.VerificationResult result = retry;
                 switch (result) {
                     case PASSED:
                         logger.fine("[L7] 재접속 검증 통과: " + playerName + " (" + ip + ")");
@@ -258,7 +283,7 @@ public final class ConnectionListener implements Listener {
                     case EXPIRED:
                     case NEW:
                     default:
-                        securityManager.startVerification(ip);
+                        securityManager.startVerification(ip, event.getUniqueId());
                         event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, KICK_VERIFY_NEW);
                         logger.info("[L7] 재접속 검증 요구 (" + verifyReason + "): " + playerName + " (" + ip + ")");
                         break;
@@ -268,5 +293,31 @@ public final class ConnectionListener implements Listener {
         }
 
         logger.fine("[L7] 접속 허용: " + playerName + " (" + ip + ")");
+    }
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPreLoginComplete(AsyncPlayerPreLoginEvent event) {
+        var assignment = assignments.asMap().remove(event);
+        if (!securityManager.isActive()) {
+            event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, KICK_VERIFY_NEW);
+        } else if (assignment != null && event.getLoginResult() == AsyncPlayerPreLoginEvent.Result.ALLOWED) {
+            securityManager.getCaptchas().flag(event.getUniqueId(), assignment);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onLoginComplete(org.bukkit.event.player.PlayerLoginEvent event) {
+        if (event.getResult() != org.bukkit.event.player.PlayerLoginEvent.Result.ALLOWED) {
+            securityManager.getCaptchas().discardPending(event.getPlayer().getUniqueId());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onJoin(org.bukkit.event.player.PlayerJoinEvent event) {
+        securityManager.getCaptchas().join(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) {
+        securityManager.getCaptchas().quit(event.getPlayer().getUniqueId());
     }
 }
