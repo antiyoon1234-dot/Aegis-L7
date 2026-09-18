@@ -97,7 +97,7 @@ public final class MapCaptchaListener implements Listener {
             event.setCancelled(true);
             if (event.getMessage().trim().equalsIgnoreCase(expected)) {
                 activeCaptchas.remove(player.getUniqueId());
-                player.getInventory().setItemInMainHand(new ItemStack(Material.AIR));
+                Bukkit.getScheduler().runTask(plugin, () -> player.getInventory().setItemInMainHand(new ItemStack(Material.AIR)));
                 String ip = IpUtils.getIp(player);
                 securityManager.passMapCaptcha(ip);
                 player.sendMessage(Component.text("검증 성공! 정상적으로 플레이가 가능합니다.", NamedTextColor.GREEN));

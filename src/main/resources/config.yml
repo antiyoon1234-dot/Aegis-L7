@@ -4,7 +4,7 @@
 
 # 접속 빈도 제한 (Rate Limiting)
 rate-limit:
-  max-connections: 5
+  max-connections: 20
   window-seconds: 30
 
 # 핑/MOTD 플러드 방어

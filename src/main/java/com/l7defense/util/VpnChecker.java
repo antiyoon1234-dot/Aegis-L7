@@ -64,7 +64,9 @@ public final class VpnChecker {
             }
         } catch (Exception e) {
             // 타임아웃 등 예외 발생 시 무시하고 통과 (오탐 방지)
-            logger.fine("[Anti-VPN] API 호출 실패 (" + ip + "): " + e.getMessage());
+            logger.fine("[Anti-VPN] API error: " + e.getMessage());
+        } finally {
+            if (conn != null) conn.disconnect();
         }
         return false;
     }

@@ -43,8 +43,7 @@ public final class FirewallManager {
     private void executeAsync(String command) {
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
-                Process process = Runtime.getRuntime().exec(command);
-                int exitCode = process.waitFor();
+                Process process = new ProcessBuilder(command.split(" ")).redirectErrorStream(true).start(); process.getInputStream().transferTo(java.io.OutputStream.nullOutputStream()); int exitCode = process.waitFor();
                 if (exitCode != 0) {
                     logger.warning("[방화벽] 명령어 실행 실패 (종료 코드: " + exitCode + "): " + command);
                 } else {
