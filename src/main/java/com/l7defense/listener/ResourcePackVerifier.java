@@ -58,10 +58,12 @@ public final class ResourcePackVerifier implements Listener {
             
             // 15초 내에 수락/적용 완료 응답이 없으면 킥 (타임아웃)
             int taskId = Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                if (pendingVerifications.containsKey(player.getUniqueId()) && player.isOnline()) {
+                if (pendingVerifications.containsKey(player.getUniqueId())) {
                     pendingVerifications.remove(player.getUniqueId());
-                    securityManager.blockIp(ip, "리소스팩 캡챠 타임아웃");
-                    player.kick(Component.text("리소스팩 다운로드에 실패했습니다. (타임아웃)\n\n서버 리소스팩 설정을 [사용]으로 변경 후 재접속해주세요.", NamedTextColor.RED));
+                    if (player.isOnline()) {
+                        securityManager.blockIp(ip, "리소스팩 캡챠 타임아웃");
+                        player.kick(Component.text("리소스팩 다운로드에 실패했습니다. (타임아웃)\n\n서버 리소스팩 설정을 [사용]으로 변경 후 재접속해주세요.", NamedTextColor.RED));
+                    }
                 }
             }, 20L * 15L).getTaskId();
             
@@ -95,8 +97,17 @@ public final class ResourcePackVerifier implements Listener {
                     // 수락은 했으나 아직 다운로드/적용 중. 타이머는 계속 돌아가야 하므로 다시 대기 상태로 넣진 않음.
                     // 위 taskId 취소 로직을 약간 우회해야 함: ACCEPTED일 때는 타이머를 끄지 않게 설계해야 함.
                     // 구현 수정: ACCEPTED 시에는 맵에 다시 넣습니다.
-                    // ACCEPTED는 아무것도 취소/제거하지 않고 넘어갑니다.`n                    break;
+                    // ACCEPTED는 아무것도 취소/제거하지 않고 넘어갑니다.
+                    break;
             }
+        }
+    }
+
+    @EventHandler
+    public void onPlayerQuit(org.bukkit.event.player.PlayerQuitEvent event) {
+        Integer taskId = pendingVerifications.remove(event.getPlayer().getUniqueId());
+        if (taskId != null) {
+            Bukkit.getScheduler().cancelTask(taskId);
         }
     }
 }

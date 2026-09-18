@@ -117,6 +117,11 @@ public final class AlertManager {
         return !mutedPlayers.contains(playerId);
     }
 
+    /** 플레이어 접속 종료 시 메모리 누수 방지를 위해 캐시에서 제거합니다. */
+    public void removeMutedPlayer(UUID playerId) {
+        mutedPlayers.remove(playerId);
+    }
+
     /** 전역 알림 상태를 토글합니다. */
     public boolean toggleGlobalAlert() {
         globalAlertEnabled = !globalAlertEnabled;

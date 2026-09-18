@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class BrandTimingListener implements PluginMessageListener {
 
+    private final Plugin plugin;
     private final SecurityManager securityManager;
     private final boolean enabled;
     
@@ -28,6 +29,7 @@ public final class BrandTimingListener implements PluginMessageListener {
     private final ConcurrentHashMap<UUID, Long> joinTimes = new ConcurrentHashMap<>();
 
     public BrandTimingListener(Plugin plugin, SecurityManager securityManager, boolean enabled) {
+        this.plugin = plugin;
         this.securityManager = securityManager;
         this.enabled = enabled;
         if (enabled) {
@@ -59,7 +61,11 @@ public final class BrandTimingListener implements PluginMessageListener {
             // 15ms 미만의 딜레이는 기계(봇 스크립트)로 간주
             if (delay < 15L) {
                 securityManager.blockIp(ip, "비정상적 페이로드 타이밍 (Client Brand Spoof)");
-                org.bukkit.Bukkit.getScheduler().runTask(org.bukkit.Bukkit.getPluginManager().getPlugin("L7Defense"), () -> player.kick(Component.text("클라이언트 검증에 실패했습니다. (Error: TIMING)", NamedTextColor.RED)));
+                org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
+                    if (player.isOnline()) {
+                        player.kick(Component.text("클라이언트 검증에 실패했습니다. (Error: TIMING)", NamedTextColor.RED));
+                    }
+                });
             } else {
                 // 정상 클라이언트: 화이트리스트 점수 부여 또는 안전 통과
             }

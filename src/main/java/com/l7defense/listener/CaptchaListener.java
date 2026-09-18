@@ -58,6 +58,7 @@ public final class CaptchaListener implements Listener {
     }
 
     public void openCaptcha(Player player) {
+        if (!player.isOnline()) return;
         Inventory inv = Bukkit.createInventory(null, 27, captchaTitle);
         int greenSlot = random.nextInt(27);
 

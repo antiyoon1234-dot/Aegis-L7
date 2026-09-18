@@ -215,7 +215,10 @@ public final class L7DefensePlugin extends JavaPlugin {
             @org.bukkit.event.EventHandler(priority = org.bukkit.event.EventPriority.MONITOR)
             public void onJoin(org.bukkit.event.player.PlayerJoinEvent e) { brandListener.recordJoin(e.getPlayer()); }
             @org.bukkit.event.EventHandler
-            public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) { brandListener.recordQuit(e.getPlayer()); }
+            public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) { 
+                brandListener.recordQuit(e.getPlayer()); 
+                alertManager.removeMutedPlayer(e.getPlayer().getUniqueId());
+            }
         }, this);
 
         // 스케줄러

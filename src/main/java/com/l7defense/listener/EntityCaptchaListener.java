@@ -58,6 +58,7 @@ public final class EntityCaptchaListener implements Listener {
     }
 
     public void spawnCaptchaEntity(Player player) {
+        if (!player.isOnline()) return;
         Location loc = player.getLocation().add(0, 1.5, 0).add(player.getLocation().getDirection().multiply(2.0));
         
         ArmorStand stand = (ArmorStand) player.getWorld().spawnEntity(loc, EntityType.ARMOR_STAND);
