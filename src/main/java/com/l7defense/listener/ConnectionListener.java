@@ -180,7 +180,7 @@ public final class ConnectionListener implements Listener {
             }
 
             // ── 4. Ping-before-Join 검사 ──────────────────
-        if (securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PING)) {
+        if (securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PING) && (!pingOnlyUnderAttack || securityManager.isUnderAttack())) {
             if (!securityManager.hasPingedRecently(ip)) {
                 needsVerification = true;
                 verifyReason = "Ping 기록 없음";
@@ -207,7 +207,7 @@ public final class ConnectionListener implements Listener {
         }
 
         // ── 6. GeoIP & Anti-VPN 필터 (v1.4) ─────────────
-        if (!needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.VPN)) {
+        if (!needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.VPN) && (!vpnOnlyUnderAttack || securityManager.isUnderAttack())) {
             if (securityManager.isRestrictedGeoIp(ip)) {
                 needsVerification = true;
                 forceGuiCaptcha = true;

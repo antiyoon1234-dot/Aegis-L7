@@ -56,6 +56,8 @@ public final class MovementHeuristicsListener implements Listener {
                 // 특정 각도로 완벽하게 고정한 상태에서 몸만 회전하는 경우 의심도 증가
                 // 단, 단순 의심이므로 바로 밴하지 않고 SecurityManager 쪽에 로깅하는 것이 안전함.
                 // 여기서는 극단적인 공격 방어용으로 즉시 차단 사용.
+                flagBot(player, "기계적인 시점 이동 감지 (정수 Pitch 고정)");
+                return;
             }
         }
     }

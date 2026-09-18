@@ -441,23 +441,17 @@ public class SecurityManager {
         String ip = com.l7defense.util.IpUtils.getIp(player);
         com.l7defense.module.PenaltyAction penalty = getModuleManager().getPenalty(module);
 
-                // 1. OP 알림 전송
-        org.bukkit.Bukkit.getLogger().warning("[L7-Notify] " + player.getName() + " - " + module.getId() + " 테스트");
-        for (org.bukkit.entity.Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
-            if (p.isOp()) {
-                p.sendMessage(net.kyori.adventure.text.Component.text(
-                    "[L7 테스트] " + player.getName() + " → " + module.getDescription() + " 발동!",
-                    net.kyori.adventure.text.format.NamedTextColor.LIGHT_PURPLE));
-            }
-        }
-
-        // 강제로 플러그인 객체 찾기
-        org.bukkit.plugin.Plugin plugin = org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(getClass());
-        org.bukkit.Bukkit.getLogger().info("[L7-Debug] Plugin Found: " + (plugin != null ? plugin.getName() : "NULL"));
-
+                org.bukkit.plugin.Plugin plugin = org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(getClass());
         if (plugin == null) return;
-
         org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> {
+            org.bukkit.Bukkit.getLogger().warning("[L7-Notify] " + player.getName() + " - " + module.getId() + " 테스트");
+            for (org.bukkit.entity.Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
+                if (p.isOp()) {
+                    p.sendMessage(net.kyori.adventure.text.Component.text(
+                        "[L7 테스트] " + player.getName() + " 이(가) " + module.getDescription() + " 발동!",
+                        net.kyori.adventure.text.format.NamedTextColor.LIGHT_PURPLE));
+                }
+            }
             org.bukkit.Bukkit.getLogger().info("[L7-Debug] Scheduler Started for: " + module.getId());
             switch (module) {
                 case GUI_CAPTCHA -> {

@@ -4,7 +4,7 @@
 
 # 접속 빈도 제한 (Rate Limiting)
 rate-limit:
-  max-connections: 5
+  max-connections: 20
   window-seconds: 30
 
 # 핑/MOTD 플러드 방어
@@ -26,7 +26,7 @@ attack-detection:
 
 # 봇 닉네임 필터
 bot-filter:
-  enabled: true
+  enabled: false
   suspicious-threshold: 3
 
 # ─── v1.3 고급 휴리스틱 및 방어 기능 ───
@@ -35,30 +35,30 @@ advanced-heuristics:
   # 1. 핑 사전 검증 (Ping-before-Join)
   # 진짜 플레이어는 서버 목록에서 핑을 보낸 뒤 접속합니다. 핑 기록이 없으면 소프트 캡챠로 보냅니다.
   ping-before-join:
-    enabled: true
+    enabled: false
     # true: 공격 중일 때만 검사, false: 항상 검사
     only-under-attack: true
 
   # 2. 재접속 검증 (Soft Captcha)
   # 의심스러운 IP를 즉시 차단하지 않고 킥한 뒤, 지정된 시간 안에 다시 접속하면 통과시킵니다.
   rejoin-verification:
-    enabled: true
+    enabled: false
     min-delay-seconds: 3   # 킥 후 최소 3초는 기다려야 함 (단순 봇 스크립트 차단)
     max-delay-seconds: 15  # 15초 내에 다시 들어와야 인증 성공
 
   # 3. 호스트네임 검증
   # 플레이어가 접속할 때 사용한 도메인/IP를 검사합니다.
   hostname-validation:
-    enabled: true
+    enabled: false
     # 숫자 IP(예: 123.45.67.89:25565)로 직접 접속하는 경우 차단 (봇넷 포트 스캔 방어)
-    block-numeric-ip: true
+    block-numeric-ip: false
     # 허용할 도메인 목록 (비워두면 도메인 형식인지 확인만 함)
     # allowed-domains: ["play.myserver.com"]
     allowed-domains: []
 
 # 4. VPN / 프록시 / 데이터센터 차단 (v1.4 GeoIP 연동)
 anti-vpn:
-  enabled: true
+  enabled: false
   only-under-attack: true
 
 # 5. 국가 기반 화이트리스트 락다운 (v1.4 GeoIP)
@@ -72,7 +72,7 @@ geoip:
 # 캡챠를 뚫고 들어와 인벤토리나 아이템 상호작용 패킷을 초당 수백 번 보내 서버 틱을 깎는 크러셔 방어
 post-login:
   packet-spam-filter:
-    enabled: true
+    enabled: false
     # 1초에 발생할 수 있는 최대 상호작용 횟수
     max-actions-per-sec: 40
 
@@ -89,11 +89,11 @@ firewall:
 endgame-features:
   # 클라이언트 핑거프린팅: 접속 후 minecraft:brand 패킷이 너무 빨리 오면(봇 스크립트) 킥
   brand-fingerprinting:
-    enabled: true
+    enabled: false
   
   # 행동 분석: 기계적인 완벽한 직선/스냅 에임 뷰 꺾기 차단 (Baritone 등)
   movement-heuristics:
-    enabled: true
+    enabled: false
 
   # Redis 글로벌 밴 동기화 (BungeeCord 등 멀티 서버 환경용)
   redis-sync:
