@@ -117,6 +117,8 @@ anti_xray:
     # 허니팟 자동 배치 반경 (최소 4블록, 최대 8블록)
     decoy-min-distance: 4
     decoy-max-distance: 8
+    # 허니팟 자동 소멸 대기시간 (초) - 미채굴 시 돌로 자동 원상복구
+    decoy-lifetime-seconds: 45
   heuristics:
     # 비정상 채광 통계 감지 (최근 5분 내 최소 총 채굴 블록 수)
     min-total-blocks: 12

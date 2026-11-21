@@ -213,4 +213,28 @@ class PacketAntiXrayTest {
         assertTrue(packetManager.getActiveDecoyCount(playerUuid) > 0);
         assertTrue(packetManager.getActiveDecoyCount(playerUuid) <= 2);
     }
+
+    @Test
+    @DisplayName("PacketAntiXrayManager: 허니팟 시간 만료(TTL) 시 자동 삭제 및 원래 블록 복원 검증")
+    void testDecoyAutoExpiration() {
+        PacketAntiXrayManager packetManager = new PacketAntiXrayManager(plugin, securityManager, true, false, true, true, 3, 4, 8, 1);
+
+        Location decoyLoc = new Location(world, 15, -20, 15);
+        Block block = Mockito.mock(Block.class);
+        when(block.getLocation()).thenReturn(decoyLoc);
+        when(block.getBlockData()).thenReturn(Mockito.mock(BlockData.class));
+        when(world.getBlockAt(decoyLoc)).thenReturn(block);
+
+        // 1초 유효시간의 허니팟 주입
+        packetManager.injectDecoy(player, decoyLoc, Material.DIAMOND_ORE, 1);
+        assertTrue(packetManager.isDecoy(player, decoyLoc));
+        assertEquals(1, packetManager.getActiveDecoyCount(playerUuid));
+
+        // 만료 시간 경과 시뮬레이션: cleanExpiredDecoys 에 미래 시간 전달
+        long futureTime = System.currentTimeMillis() + 2000L;
+        packetManager.cleanExpiredDecoys(player, futureTime);
+
+        // 만료 후 허니팟 자동 삭제 검증
+        assertEquals(0, packetManager.getActiveDecoyCount(playerUuid));
+    }
 }

@@ -229,6 +229,7 @@ public final class L7DefensePlugin extends JavaPlugin {
         int maxDecoys = config.getInt("anti_xray.packet-obfuscation.max-decoys-per-player", 3);
         int decoyMinDist = config.getInt("anti_xray.packet-obfuscation.decoy-min-distance", 4);
         int decoyMaxDist = config.getInt("anti_xray.packet-obfuscation.decoy-max-distance", 8);
+        int decoyLifetime = config.getInt("anti_xray.packet-obfuscation.decoy-lifetime-seconds", 45);
 
         int minTotal = config.getInt("anti_xray.heuristics.min-total-blocks", 12);
         int minRare = config.getInt("anti_xray.heuristics.min-rare-ores", 3);
@@ -236,7 +237,7 @@ public final class L7DefensePlugin extends JavaPlugin {
 
         com.l7defense.manager.PacketAntiXrayManager packetAntiXray = new com.l7defense.manager.PacketAntiXrayManager(
                 this, securityManager, xrayPacketEn, xrayPaperAuto, xrayMasking, xrayDecoys,
-                maxDecoys, decoyMinDist, decoyMaxDist
+                maxDecoys, decoyMinDist, decoyMaxDist, decoyLifetime
         );
         this.packetAntiXrayManager = packetAntiXray;
         lifecycles.add(packetAntiXray);

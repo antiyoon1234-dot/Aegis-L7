@@ -87,6 +87,10 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
                 if (args.length >= 3) {
                     try { dist = Math.max(1, Math.min(15, Integer.parseInt(args[2]))); } catch (NumberFormatException ignored) {}
                 }
+                int lifetime = pxManager.getDecoyLifetimeSeconds();
+                if (args.length >= 4) {
+                    try { lifetime = Math.max(5, Math.min(600, Integer.parseInt(args[3]))); } catch (NumberFormatException ignored) {}
+                }
                 org.bukkit.Location eye = player.getEyeLocation();
                 org.bukkit.util.Vector dir = eye.getDirection().normalize();
                 org.bukkit.Location target = eye.clone().add(dir.multiply(dist));
@@ -94,9 +98,10 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
                 org.bukkit.Material fakeMat = player.getWorld().getEnvironment() == org.bukkit.World.Environment.NETHER
                         ? org.bukkit.Material.ANCIENT_DEBRIS
                         : (target.getBlockY() < 0 ? org.bukkit.Material.DEEPSLATE_DIAMOND_ORE : org.bukkit.Material.DIAMOND_ORE);
-                pxManager.injectDecoy(player, b.getLocation(), fakeMat);
-                player.sendMessage("§a[L7-AntiXray] 시선 방향 " + dist + "블록 앞 벽 속에 가짜 광석 허니팟을 주입했습니다!");
+                pxManager.injectDecoy(player, b.getLocation(), fakeMat, lifetime);
+                player.sendMessage("§a[L7-AntiXray] 시선 방향 " + dist + "블록 앞 벽 속에 가짜 광석 허니팟을 주입했습니다! (유효시간: §e" + lifetime + "초§a)");
                 player.sendMessage("§7위치: §e" + b.getWorld().getName() + " " + b.getX() + ", " + b.getY() + ", " + b.getZ() + " §7(가짜 광석: §b" + fakeMat.name() + "§7)");
+                player.sendMessage("§7유효 시간이 지나면 자동으로 원래 암석으로 복구/삭제됩니다.");
                 player.sendMessage("§e[테스트 가이드] §f엑스레이(ESP/텍스처팩)를 켜면 해당 벽 속 다이아몬드가 보입니다. 벽을 파고 들어가 채굴하면 즉시 적발 경고가 발동합니다!");
                 return true;
             }
