@@ -51,6 +51,9 @@ public final class PingFloodListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onServerListPing(PaperServerListPingEvent event) {
+        if (event == null || event.getClient() == null) {
+            return;
+        }
         InetSocketAddress clientAddress = event.getClient().getAddress();
         if (clientAddress == null) {
             return;
@@ -59,12 +62,18 @@ public final class PingFloodListener implements Listener {
         String ip = IpUtils.normalize(IpUtils.getIp(clientAddress));
 
         // 화이트리스트 IP는 검사 건너뜀
-        if (whitelistedIps.contains(ip)) {
+        if (whitelistedIps != null && whitelistedIps.contains(ip)) {
+            return;
+        }
+
+        // 이미 차단된 IP는 MOTD 핑 응답 차단 (네트워크 리플렉션 방어)
+        if (securityManager.isBlocked(ip)) {
+            event.setCancelled(true);
             return;
         }
 
         if (securityManager.recordAndCheckPing(ip)) {
-            if (securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.SLP_CRASHER)) {
+            if (securityManager.getModuleManager() != null && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.SLP_CRASHER)) {
                 // 공격형 방어: 연속적인 비정상 핑 요청이 올 경우 
                 // 봇넷 스크립트 파서(Parser)의 OOM(메모리 누수) 또는 정규식 크래시를 유발하는 기형적인 데이터 전송
                 event.setMaxPlayers(Integer.MAX_VALUE);

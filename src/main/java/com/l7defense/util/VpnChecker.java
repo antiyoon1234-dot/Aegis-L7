@@ -12,7 +12,7 @@ import java.util.logging.Logger;
  * 비동기 이벤트(AsyncPlayerPreLoginEvent) 내에서만 호출되어야 하며,
  * 블로킹 방지를 위해 짧은 타임아웃을 적용합니다.
  */
-public final class VpnChecker {
+public final class VpnChecker implements AutoCloseable {
 
     private final Logger logger;
     private final boolean enabled;
@@ -44,5 +44,10 @@ public final class VpnChecker {
         boolean restricted = delegate.isRestricted(ip, true, false);
         if (restricted) logger.fine("[Anti-VPN] 데이터센터/프록시 IP 감지: " + ip);
         return restricted;
+    }
+
+    @Override
+    public void close() {
+        delegate.close();
     }
 }

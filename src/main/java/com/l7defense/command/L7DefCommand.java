@@ -62,6 +62,27 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        if (args[0].equalsIgnoreCase("xray")) {
+            com.l7defense.L7DefensePlugin l7Plugin = (com.l7defense.L7DefensePlugin) plugin;
+            com.l7defense.manager.PacketAntiXrayManager pxManager = l7Plugin.getPacketAntiXrayManager();
+            if (args.length >= 2 && args[1].equalsIgnoreCase("engine2")) {
+                if (pxManager != null) {
+                    pxManager.setupPaperEngineMode2();
+                    sender.sendMessage("§a[L7-AntiXray] Paper Engine-Mode 2(패킷 난수화) 설정을 적용하고 리로드했습니다.");
+                } else {
+                    sender.sendMessage("§c[L7-AntiXray] 패킷 매니저가 초기화되지 않았습니다.");
+                }
+                return true;
+            }
+            sender.sendMessage("§b[L7 엑스레이 방어 및 패킷 난수화 상태]");
+            boolean active = pxManager != null && pxManager.isPaperEngineMode2Active();
+            sender.sendMessage("§7Paper Engine-Mode 2: " + (active ? "§a[가동 중]" : "§c[미적용/설정필요]"));
+            sender.sendMessage("§7패킷 마스킹(은닉): " + (pxManager != null && pxManager.isClientMaskingEnabled() ? "§a[ON]" : "§c[OFF]"));
+            sender.sendMessage("§7허니팟 패킷 트랩: " + (pxManager != null && pxManager.isDecoysEnabled() ? "§a[ON]" : "§c[OFF]"));
+            sender.sendMessage("§e/l7def xray engine2 §7- Paper Engine-Mode 2 즉시 강제 적용");
+            return true;
+        }
+
         if (args[0].equalsIgnoreCase("status")) {
             sender.sendMessage("§b[L7 방어 시스템 상태]");
             sender.sendMessage("§7현재 차단된 캐시 IP 수: §f" + securityManager.getBlockedCount());
@@ -139,7 +160,7 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             }
 
             try {
-                PenaltyAction action = PenaltyAction.valueOf(args[2].toUpperCase());
+                PenaltyAction action = PenaltyAction.valueOf(args[2].toUpperCase(java.util.Locale.ROOT));
                 securityManager.getModuleManager().setPenalty(mod, action);
                 sender.sendMessage("§a모듈 '" + mod.getId() + "' 의 처벌 수위가 " + action.name() + "(으)로 변경되었습니다.");
             } catch (Exception e) {
@@ -158,11 +179,17 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 1) {
             completions.add("status");
+            completions.add("gui");
             completions.add("modules");
             completions.add("toggle");
             completions.add("penalty");
+            completions.add("xray");
+            completions.add("unban");
             completions.add("test");
             completions.add("reload");
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("xray")) {
+            completions.add("engine2");
+            completions.add("status");
         } else if (args.length == 2 && (args[0].equalsIgnoreCase("toggle") || args[0].equalsIgnoreCase("penalty") || args[0].equalsIgnoreCase("test"))) {
             for (DefenseModule mod : DefenseModule.values()) {
                 completions.add(mod.getId());

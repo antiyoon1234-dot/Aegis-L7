@@ -135,7 +135,7 @@ public final class FirewallManager implements AutoCloseable {
         }
     }
 
-    static List<String> splitCommand(String command) {
+    public static List<String> splitCommand(String command) {
         List<String> parts = new ArrayList<>();
         StringBuilder part = new StringBuilder();
         char quote = 0;
@@ -154,6 +154,12 @@ public final class FirewallManager implements AutoCloseable {
     @Override public void close() {
         shutdownDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         closed = true;
+        Process current = running;
+        if (current != null && current.isAlive()) {
+            current.descendants().forEach(ProcessHandle::destroyForcibly);
+            current.destroyForcibly();
+        }
+        worker.interrupt();
         // 메인 스레드는 프로세스 종료나 OS 규칙 삭제를 기다리지 않습니다.
         synchronized (wakeup) { wakeup.notifyAll(); }
     }

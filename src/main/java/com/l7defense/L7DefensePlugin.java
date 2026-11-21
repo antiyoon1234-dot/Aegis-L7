@@ -39,6 +39,7 @@ public final class L7DefensePlugin extends JavaPlugin {
     private com.l7defense.util.GeoIpManager geoIpManager;
     private com.l7defense.util.RedisManager redisManager;
     private com.l7defense.module.ModuleConfigManager moduleManager;
+    private com.l7defense.manager.PacketAntiXrayManager packetAntiXrayManager;
 
     @Override
     public void onEnable() {
@@ -186,20 +187,27 @@ public final class L7DefensePlugin extends JavaPlugin {
         lifecycles.add(entityCaptcha);
         lifecycles.add(mapCaptcha);
         pm.registerEvents(guiCaptcha, this);
-        pm.registerEvents(new com.l7defense.listener.PacketSpamListener(securityManager, spamEn, spamLimit), this);
+        com.l7defense.listener.PacketSpamListener packetSpamListener = new com.l7defense.listener.PacketSpamListener(securityManager, spamEn, spamLimit);
+        lifecycles.add(packetSpamListener);
+        pm.registerEvents(packetSpamListener, this);
         pm.registerEvents(entityCaptcha, this);
         var rpCaptcha = new com.l7defense.listener.ResourcePackVerifier(this, securityManager, true);
         lifecycles.add(rpCaptcha);
         pm.registerEvents(rpCaptcha, this);
-        pm.registerEvents(new com.l7defense.listener.MovementHeuristicsListener(securityManager, moveEn), this);
+        var movementListener = new com.l7defense.listener.MovementHeuristicsListener(securityManager, moveEn);
+        lifecycles.add(movementListener);
+        pm.registerEvents(movementListener, this);
         pm.registerEvents(mapCaptcha, this);
-        pm.registerEvents(new com.l7defense.listener.ChatAiListener(securityManager), this);
+        var chatAi = new com.l7defense.listener.ChatAiListener(securityManager);
+        lifecycles.add(chatAi);
+        pm.registerEvents(chatAi, this);
 
         securityManager.setGuiCaptchaTrigger(guiCaptcha::openCaptcha);
         securityManager.setEntityCaptchaTrigger(entityCaptcha::spawnCaptchaEntity);
         securityManager.setMapCaptchaTrigger(mapCaptcha::triggerMapCaptcha);
 
         com.l7defense.listener.ExploitCrasherListener crasherListener = new com.l7defense.listener.ExploitCrasherListener(securityManager);
+        lifecycles.add(crasherListener);
         pm.registerEvents(crasherListener, this);
 
         // v1.8 킬아우라 허니팟 및 매크로 주파수 분석기
@@ -209,13 +217,33 @@ public final class L7DefensePlugin extends JavaPlugin {
 
         // v1.9 월드 다운로더(맵 유출) 차단 및 조명 폭탄 방어
         com.l7defense.listener.ClientModDetectorListener wdlListener = new com.l7defense.listener.ClientModDetectorListener(securityManager);
-        pm.registerEvents(new com.l7defense.listener.BlockCrasherListener(securityManager), this);
+        com.l7defense.listener.BlockCrasherListener blockCrasherListener = new com.l7defense.listener.BlockCrasherListener(securityManager);
+        lifecycles.add(blockCrasherListener);
+        pm.registerEvents(blockCrasherListener, this);
+
+        // v2.0 통계 및 패킷 단위 광석 난수화 엑스레이 방어
+        boolean xrayPacketEn = config.getBoolean("anti_xray.packet-obfuscation.enabled", true);
+        boolean xrayPaperAuto = config.getBoolean("anti_xray.packet-obfuscation.auto-configure-paper-engine2", true);
+        boolean xrayMasking = config.getBoolean("anti_xray.packet-obfuscation.client-packet-masking", true);
+        boolean xrayDecoys = config.getBoolean("anti_xray.packet-obfuscation.packet-decoy-traps", true);
+
+        com.l7defense.manager.PacketAntiXrayManager packetAntiXray = new com.l7defense.manager.PacketAntiXrayManager(
+                this, securityManager, xrayPacketEn, xrayPaperAuto, xrayMasking, xrayDecoys
+        );
+        this.packetAntiXrayManager = packetAntiXray;
+        lifecycles.add(packetAntiXray);
+
+        com.l7defense.listener.AntiXrayListener antiXrayListener = new com.l7defense.listener.AntiXrayListener(securityManager);
+        antiXrayListener.setPacketAntiXrayManager(packetAntiXray);
+        lifecycles.add(antiXrayListener);
+        pm.registerEvents(antiXrayListener, this);
 
         // 패킷 크래셔 페이로드 채널
         try { getServer().getMessenger().registerIncomingPluginChannel(this, "minecraft:custom_payload", crasherListener); } catch (Exception ignored) {}
 
         // v1.5 플러그인 채널 (Brand Timing)
         com.l7defense.listener.BrandTimingListener brandListener = new com.l7defense.listener.BrandTimingListener(this, securityManager, brandEn);
+        lifecycles.add(brandListener);
         try { getServer().getMessenger().registerIncomingPluginChannel(this, "minecraft:brand", brandListener); } catch (Exception ignored) {}
 
         // 1.13+ 네임스페이스 형식으로 채널 등록 (legacy WDL|INIT 대신 wdl:init 등 사용)
@@ -280,7 +308,7 @@ public final class L7DefensePlugin extends JavaPlugin {
     }
 
     private void stopRuntime() {
-        if (alertManager != null) alertManager.stopAlertScheduler();
+        if (alertManager != null) alertManager.close();
         if (securityManager != null) securityManager.shutdown();
         if (redisManager != null) redisManager.shutdown();
         if (geoIpManager != null) geoIpManager.close();
@@ -293,4 +321,5 @@ public final class L7DefensePlugin extends JavaPlugin {
 
     public SecurityManager getSecurityManager() { return securityManager; }
     public AlertManager getAlertManager() { return alertManager; }
+    public com.l7defense.manager.PacketAntiXrayManager getPacketAntiXrayManager() { return packetAntiXrayManager; }
 }

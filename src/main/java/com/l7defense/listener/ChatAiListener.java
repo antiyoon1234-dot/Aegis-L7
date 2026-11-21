@@ -10,7 +10,9 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
@@ -18,10 +20,13 @@ import java.util.regex.Pattern;
  * 지능형 챗봇 필터 (v1.7)
  * <p>
  * 1. Levenshtein Distance (문자열 편집 거리)를 이용한 유사도 기반 스팸 차단
- * 2. 아랍어 등 RTL(Right-To-Left) 특수문자를 이용한 마인크래프트 클라이언트 렌더링 크래시 방어
+ * 2. 아랍어 등 RTL(Right-To-Left) 및 Unicode Bidi 특수문자를 이용한 마인크래프트 클라이언트 렌더링 크래시 방어
  * 3. 기계적 패턴(동일 글자 반복 등) 도배 방어
  */
-public final class ChatAiListener implements Listener {
+public final class ChatAiListener implements Listener, AutoCloseable {
+
+    private static final Pattern BIDI_OVERRIDE_PATTERN = Pattern.compile("[\u200E\u200F\u202A-\u202E\u2066-\u2069\u061C]");
+    private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^\\p{L}\\p{N}]");
 
     private final SecurityManager securityManager;
 
@@ -40,24 +45,26 @@ public final class ChatAiListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onPlayerChat(AsyncPlayerChatEvent event) {
-        if (!securityManager.getModuleManager().isEnabled(DefenseModule.CHAT_AI)) return;
+        if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.CHAT_AI)) return;
 
         Player player = event.getPlayer();
         String message = event.getMessage();
-        var session = securityManager.getSessions().get(player);
+        if (player == null || message == null) return;
+
+        var session = securityManager.getSessions() != null ? securityManager.getSessions().get(player) : null;
         if (session == null) return;
-        String ip = session.id().toString(); // 개인 도배는 공유 IP가 아닌 플레이어별 집계
+        String playerId = session.id().toString(); // 개인 도배는 공유 IP가 아닌 플레이어별 집계
         if (message.length() > 256) {
             event.setCancelled(true);
             securityManager.handleViolation(player, DefenseModule.EXPLOIT_CRASHER, "비정상적 채팅 길이");
             return;
         }
 
-        // 1. 악성 렌더링 크래시 방어 (RTL Override 특수문자 차단)
+        // 1. 악성 렌더링 크래시 방어 (RTL / Bidi Override 특수문자 차단)
         // \u202E, \u202D 등은 마인크래프트 채팅창 렌더링을 터뜨리거나 반전시킵니다.
-        if (message.contains("\u202E") || message.contains("\u202D") || message.contains("\u200F")) {
+        if (BIDI_OVERRIDE_PATTERN.matcher(message).find()) {
             event.setCancelled(true);
-            securityManager.handleViolation(player, DefenseModule.EXPLOIT_CRASHER, "RTL 오버라이드 채팅 크래셔 감지");
+            securityManager.handleViolation(player, DefenseModule.EXPLOIT_CRASHER, "RTL/Bidi 오버라이드 채팅 크래셔 감지");
             return;
         }
 
@@ -68,7 +75,7 @@ public final class ChatAiListener implements Listener {
         if (normalizedMsg.length() < 5) return;
 
         // 개인 도배 검사 (자기 자신이 똑같은/비슷한 말을 계속 반복하는가?)
-        String lastUserMsg = userRecentChats.getIfPresent(ip);
+        String lastUserMsg = userRecentChats.getIfPresent(playerId);
         if (lastUserMsg != null) {
             double similarity = calculateSimilarity(normalizedMsg, lastUserMsg);
             if (similarity > 0.85) { // 85% 이상 일치하면 차단
@@ -95,7 +102,7 @@ public final class ChatAiListener implements Listener {
         }
 
         // 정상 채팅 통과 시 캐시에 기록
-        userRecentChats.put(ip, normalizedMsg);
+        userRecentChats.put(playerId, normalizedMsg);
         globalRecentChats.put(messageId.incrementAndGet(), normalizedMsg);
     }
 
@@ -104,7 +111,7 @@ public final class ChatAiListener implements Listener {
      * (예: "J o i n  H.e.r.e!" -> "joinhere")
      */
     private String normalizeForAnalysis(String str) {
-        return str.replaceAll("[^a-zA-Z0-9가-힣]", "").toLowerCase();
+        return NON_ALPHANUMERIC.matcher(str).replaceAll("").toLowerCase(Locale.ROOT);
     }
 
     /**
@@ -116,6 +123,17 @@ public final class ChatAiListener implements Listener {
 
         int distance = computeLevenshteinDistance(s1, s2);
         return 1.0 - ((double) distance / maxLen);
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        userRecentChats.invalidate(event.getPlayer().getUniqueId().toString());
+    }
+
+    @Override
+    public void close() {
+        userRecentChats.invalidateAll();
+        globalRecentChats.invalidateAll();
     }
 
     private int computeLevenshteinDistance(String s1, String s2) {

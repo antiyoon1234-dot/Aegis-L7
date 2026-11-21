@@ -3,6 +3,7 @@ package com.l7defense.util;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -22,6 +23,8 @@ import java.util.stream.Collectors;
  * DNS 조회 없이 로컬 파싱만 수행하므로 성능 영향이 없습니다.</p>
  */
 public final class IpUtils {
+
+    private static final Pattern IPV6_HEX_PATTERN = Pattern.compile("^[0-9a-fA-F:.]+$");
 
     private IpUtils() {
         // 유틸리티 클래스 — 인스턴스화 방지
@@ -50,7 +53,7 @@ public final class IpUtils {
     public static boolean isLiteral(String value) {
         if (value == null || value.isBlank()) return false;
         // 호스트 이름을 InetAddress에 넘기면 동기 DNS 조회가 발생합니다.
-        if (value.indexOf(':') >= 0 && value.matches("[0-9a-fA-F:.]+")) {
+        if (value.indexOf(':') >= 0 && IPV6_HEX_PATTERN.matcher(value).matches()) {
             try { InetAddress.getByName(value); return true; }
             catch (UnknownHostException ex) { return false; }
         }
@@ -81,7 +84,9 @@ public final class IpUtils {
 
     /** InetSocketAddress에서 null-safe IP 추출 */
     public static String getIp(java.net.InetSocketAddress address) {
-        if (address == null || address.getAddress() == null) return "unknown";
-        return normalize(address.getAddress().getHostAddress());
+        if (address == null) return "unknown";
+        if (address.getAddress() != null) return normalize(address.getAddress().getHostAddress());
+        String host = address.getHostString();
+        return (host != null && !host.isBlank()) ? normalize(host) : "unknown";
     }
 }

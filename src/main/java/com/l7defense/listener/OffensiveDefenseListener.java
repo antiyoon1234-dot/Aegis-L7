@@ -48,9 +48,10 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
      * ----------------------------------------------------- */
 
     private void spawnRandomHoneypots() {
-        if (!securityManager.getModuleManager().isEnabled(DefenseModule.HONEYPOT)) return;
+        if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.HONEYPOT)) return;
 
         for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p.hasPermission("l7defense.admin") || p.isDead() || !p.isValid()) continue;
             // 20% 확률로 킬아우라 테스트 (너무 자주 소환하면 서버 부하)
             if (Math.random() < 0.2) {
                 spawnHoneypot(p);
@@ -59,6 +60,7 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
     }
 
     private void spawnHoneypot(Player target) {
+        if (!target.isOnline() || target.isDead() || target.getWorld() == null) return;
         // 플레이어 시야 뒤쪽(또는 위쪽)에 보이지 않는 박쥐를 1틱 소환
         Location loc = target.getLocation().add(0, 3, 0);
 
@@ -84,7 +86,7 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
 
     @EventHandler
     public void onEntityDamage(EntityDamageByEntityEvent event) {
-        if (!securityManager.getModuleManager().isEnabled(DefenseModule.HONEYPOT)) return;
+        if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.HONEYPOT)) return;
 
         if (honeypotEntities.contains(event.getEntity().getUniqueId())) {
             event.setCancelled(true); // 데미지 무시
@@ -101,17 +103,22 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
 
     @EventHandler
     public void onInteract(PlayerInteractEvent event) {
-        if (!securityManager.getModuleManager().isEnabled(DefenseModule.MACRO_CHECK)) return;
+        if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.MACRO_CHECK)) return;
         if (event.getAction() != Action.LEFT_CLICK_AIR && event.getAction() != Action.LEFT_CLICK_BLOCK) return;
 
         Player player = event.getPlayer();
+        if (player == null || player.hasPermission("l7defense.admin")) return;
         UUID uuid = player.getUniqueId();
 
         Queue<Long> clicks = clickHistory.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
-        clicks.add(System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        // 3초 이상 지난 오래된 클릭 기록 제거하여 분산 왜곡 방지
+        while (!clicks.isEmpty() && now - clicks.peek() > 3000) {
+            clicks.poll();
+        }
+        clicks.add(now);
 
-        if (clicks.size() > 15) {
-            clicks.poll(); // 최근 15개 유지
+        if (clicks.size() >= 15) {
             analyzeMacro(player, new ArrayList<>(clicks));
         }
     }
@@ -140,7 +147,7 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
         // 사람이 마우스를 클릭하면 표준편차가 보통 10~30 이상 발생함.
         // 표준편차가 3.0 이하라면 정확한 ms 간격으로 클릭하는 기계/매크로/오토클리커임.
         if (stdDev < 3.0 && mean < 150) { // 클릭 속도도 빠르면서(150ms 미만) 오차가 거의 없는 경우
-            String reason = String.format("오토클리커/매크로 감지 (표준편차: %.2fms)", stdDev);
+            String reason = String.format(Locale.ROOT, "오토클리커/매크로 감지 (표준편차: %.2fms)", stdDev);
             // 틱 지연으로 입력이 한꺼번에 처리된 경우도 검증하되 즉시 밴하지 않습니다.
             if (mean < 25) securityManager.challengeHeuristic(player, DefenseModule.MACRO_CHECK, reason);
             else securityManager.handleViolation(player, DefenseModule.MACRO_CHECK, reason);

@@ -35,7 +35,7 @@ public final class EntityCaptchaListener implements Listener, AutoCloseable {
     private final boolean enabled;
 
     // 유저 UUID -> 생성된 캡챠 아머스탠드 UUID
-    private final java.util.Map<UUID, ArmorStand> captchaEntities = new java.util.HashMap<>();
+    private final java.util.Map<UUID, ArmorStand> captchaEntities = new ConcurrentHashMap<>();
     private final com.l7defense.util.PlayerTasks tasks;
 
     public EntityCaptchaListener(Plugin plugin, SecurityManager securityManager, boolean enabled) {
@@ -93,7 +93,13 @@ public final class EntityCaptchaListener implements Listener, AutoCloseable {
             if (captchaEntities.get(player.getUniqueId()) != stand) return;
             remove(player.getUniqueId());
             securityManager.handleViolation(player, com.l7defense.module.DefenseModule.ENTITY_CAPTCHA, "3D 캡챠 타임아웃");
-            tasks.later(player, "retry", 20L, () -> spawnCaptchaEntity(player));
+            if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.ENTITY_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                securityManager.passEntityCaptcha(player);
+            } else if (player.isOnline()) {
+                tasks.later(player, "retry", 20L, () -> {
+                    if (player.isOnline()) spawnCaptchaEntity(player);
+                });
+            }
         });
     }
 
@@ -130,8 +136,17 @@ public final class EntityCaptchaListener implements Listener, AutoCloseable {
 
     private void retryUnavailable(Player player) {
         securityManager.offerCaptchaRetry(player);
-        player.kick(Component.text("캡챠를 생성할 수 없습니다. 잠시 후 다시 접속해주세요.", NamedTextColor.RED));
-        tasks.later(player, "retry", 20L, () -> spawnCaptchaEntity(player));
+        if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.ENTITY_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+            securityManager.handleViolation(player, com.l7defense.module.DefenseModule.ENTITY_CAPTCHA, "3D 캡챠 생성 불가 (주의 통과)");
+            securityManager.passEntityCaptcha(player);
+        } else {
+            player.kick(Component.text("캡챠를 생성할 수 없습니다. 잠시 후 다시 접속해주세요.", NamedTextColor.RED));
+            if (player.isOnline()) {
+                tasks.later(player, "retry", 20L, () -> {
+                    if (player.isOnline()) spawnCaptchaEntity(player);
+                });
+            }
+        }
     }
 
     @EventHandler

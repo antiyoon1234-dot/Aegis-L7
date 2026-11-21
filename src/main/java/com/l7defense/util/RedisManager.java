@@ -14,7 +14,7 @@ import java.util.logging.Logger;
  * <p>
  * 한 서버에서 차단된 IP가 실시간으로 다른 서버에도 차단되도록 Pub/Sub을 사용합니다.
  */
-public final class RedisManager {
+public final class RedisManager implements AutoCloseable {
 
     private final Plugin plugin;
     private final Logger logger;
@@ -108,7 +108,7 @@ public final class RedisManager {
 
     private void publish(String channel, String ip) {
         JedisPool pool = jedisPool;
-        if (closed || pool == null || !IpUtils.isLiteral(ip)) return;
+        if (closed || pool == null || pool.isClosed() || !IpUtils.isLiteral(ip)) return;
         try {
             publisher.execute(() -> {
                 if (closed) return;
@@ -123,6 +123,9 @@ public final class RedisManager {
     public void shutdown() {
         closed = true;
         publisher.shutdownNow();
+        if (pubSub != null && pubSub.isSubscribed()) {
+            try { pubSub.unsubscribe(); } catch (Exception ignored) {}
+        }
         Jedis subscriber = subscriberConnection;
         if (subscriber != null) {
             try { subscriber.getClient().disconnect(); }
@@ -131,5 +134,10 @@ public final class RedisManager {
         if (subThread != null) subThread.interrupt();
         JedisPool pool = jedisPool;
         if (pool != null) pool.close();
+    }
+
+    @Override
+    public void close() {
+        shutdown();
     }
 }

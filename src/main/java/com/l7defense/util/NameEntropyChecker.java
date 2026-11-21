@@ -1,6 +1,7 @@
 package com.l7defense.util;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -12,9 +13,16 @@ import java.util.regex.Pattern;
  */
 public final class NameEntropyChecker {
 
+    private static final double LOG2 = Math.log(2);
+
     // 정규식(v1.3)과의 호환성을 위한 기본 패턴
     private static final Pattern BASIC_BOT_PATTERN = Pattern.compile(
             "^(?:Bot|Slave|Attack)\\d{2,}|^(?:Player|User|Test|Guest)\\d{5,}", Pattern.CASE_INSENSITIVE);
+
+    // 알트 계정 제너레이터(Alt Generator) 사전 조합형 검사 (v1.6)
+    // 예: AppleTree199, DarkKnight12 등 대문자 2개 + 끝 숫자 조합
+    private static final Pattern ALT_GENERATOR_PATTERN = Pattern.compile(
+            "^[A-Z][a-z]+[A-Z][a-z]+\\d{2,4}$");
 
     /**
      * 닉네임이 알고리즘으로 자동 생성된 봇 패턴인지 검사합니다.
@@ -26,7 +34,6 @@ public final class NameEntropyChecker {
         if (BASIC_BOT_PATTERN.matcher(name).find()) return true;
         
         // 2. 알트 계정 제너레이터(Alt Generator) 사전 조합형 검사 (v1.6)
-        // 예: AppleTree199, DarkKnight12 등 대문자 2개 + 끝 숫자 조합
         if (isAltGeneratorPattern(name)) return true;
 
         // 3. 섀넌 엔트로피 검사 (문자열의 복잡도/무작위성)
@@ -46,7 +53,7 @@ public final class NameEntropyChecker {
     private static boolean isAltGeneratorPattern(String name) {
         // [대문자로 시작하는 단어 2개] + [숫자 2~4개] 패턴 감지
         // 예: BlueSky99, RedDragon2023
-        return Pattern.matches("^[A-Z][a-z]+[A-Z][a-z]+\\d{2,4}$", name);
+        return ALT_GENERATOR_PATTERN.matcher(name).matches();
     }
 
     private static double calculateShannonEntropy(String s) {
@@ -59,7 +66,7 @@ public final class NameEntropyChecker {
         int len = s.length();
         for (int count : charCounts.values()) {
             double prob = (double) count / len;
-            entropy -= prob * (Math.log(prob) / Math.log(2));
+            entropy -= prob * (Math.log(prob) / LOG2);
         }
         return entropy;
     }
@@ -67,9 +74,10 @@ public final class NameEntropyChecker {
     private static int getMaxConsecutiveConsonants(String s) {
         int max = 0;
         int current = 0;
-        String lower = s.toLowerCase();
+        String lower = s.toLowerCase(Locale.ROOT);
+        // 'y'를 모음군에 포함하여 Sky, Rhythm, Sylvia 등의 정상 닉네임 오탐(False Positive) 방지
         for (char c : lower.toCharArray()) {
-            if (Character.isLetter(c) && "aeiou".indexOf(c) == -1) {
+            if (Character.isLetter(c) && "aeiouy".indexOf(c) == -1) {
                 current++;
                 if (current > max) max = current;
             } else {

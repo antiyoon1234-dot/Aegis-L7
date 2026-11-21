@@ -44,6 +44,7 @@ public class AdminGuiManager implements Listener {
         int slot = 18;
         ModuleConfigManager configManager = securityManager.getModuleManager();
         for (DefenseModule module : DefenseModule.values()) {
+            if (slot >= 54) break;
             inv.setItem(slot++, createModuleItem(module, configManager));
         }
 
@@ -94,6 +95,7 @@ public class AdminGuiManager implements Listener {
             case MACRO_CHECK: return Material.CLOCK;
             case MAP_STEALER: return Material.SPYGLASS;
             case LIGHT_CRASHER: return Material.GLOWSTONE;
+            case ANTI_XRAY: return Material.DIAMOND_ORE;
             default: return Material.PAPER;
         }
     }
@@ -108,13 +110,14 @@ public class AdminGuiManager implements Listener {
         if (event.getRawSlot() < 0 || event.getRawSlot() >= event.getView().getTopInventory().getSize()) return;
 
         ItemStack clicked = event.getCurrentItem();
-        if (clicked == null || clicked.getType() == Material.AIR || !clicked.hasItemMeta()) return;
+        if (clicked == null || clicked.getType() == Material.AIR || !clicked.hasItemMeta() || !clicked.getItemMeta().hasDisplayName()) return;
 
         String displayName = clicked.getItemMeta().getDisplayName();
+        if (displayName == null) return;
         // 모듈 이름 파싱 ("§a§l[ON] §fPING" -> "PING")
         String moduleId = displayName.replaceAll("§[0-9a-fk-or]", "").replace("[ON] ", "").replace("[OFF] ", "").trim();
 
-        DefenseModule module = DefenseModule.fromId(moduleId.toLowerCase());
+        DefenseModule module = DefenseModule.fromId(moduleId.toLowerCase(java.util.Locale.ROOT));
         if (module == null) return;
 
         ModuleConfigManager configManager = securityManager.getModuleManager();
@@ -134,7 +137,11 @@ public class AdminGuiManager implements Listener {
         }
 
         // GUI 리프레시
-        securityManager.getSessions().submit(player, "admin-gui", () -> openGui(player));
+        if (securityManager.getSessions() != null) {
+            securityManager.getSessions().submit(player, "admin-gui", () -> openGui(player));
+        } else {
+            openGui(player);
+        }
     }
 
     @EventHandler

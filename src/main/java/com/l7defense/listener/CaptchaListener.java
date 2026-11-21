@@ -18,6 +18,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.Plugin;
 
 import java.util.Random;
+import java.util.UUID;
 
 /**
  * 인게임 인터랙티브 GUI 캡챠.
@@ -31,7 +32,7 @@ public final class CaptchaListener implements Listener, AutoCloseable {
     private final SecurityManager securityManager;
     private final Component captchaTitle = Component.text("봇 방지: 초록색 유리를 클릭하세요!", NamedTextColor.RED);
     private final Random random = new java.security.SecureRandom();
-    private final java.util.Map<java.util.UUID, Inventory> views = new java.util.HashMap<>();
+    private final java.util.Map<java.util.UUID, Inventory> views = new java.util.concurrent.ConcurrentHashMap<>();
     private final com.l7defense.util.PlayerTasks tasks;
     private boolean closed;
 
@@ -62,11 +63,19 @@ public final class CaptchaListener implements Listener, AutoCloseable {
             tasks.later(player, "timeout", 20L * 15L, () -> {
                 if (securityManager.needsGuiCaptcha(player.getUniqueId())) {
                     securityManager.offerCaptchaRetry(player);
-                    player.kick(Component.text("캡챠 인증 시간 초과. 다시 접속해주세요.", NamedTextColor.RED));
-                    tasks.later(player, "retry", 20L, () -> {
-                        views.remove(player.getUniqueId());
-                        openCaptcha(player);
-                    });
+                    views.remove(player.getUniqueId());
+                    if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.GUI_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.handleViolation(player, com.l7defense.module.DefenseModule.GUI_CAPTCHA, "캡챠 인증 시간 초과");
+                        securityManager.passGuiCaptcha(player);
+                        tasks.later(player, "close", 1L, player::closeInventory);
+                    } else {
+                        player.kick(Component.text("캡챠 인증 시간 초과. 다시 접속해주세요.", NamedTextColor.RED));
+                        if (player.isOnline()) {
+                            tasks.later(player, "retry", 20L, () -> {
+                                if (player.isOnline()) openCaptcha(player);
+                            });
+                        }
+                    }
                 }
             });
         }
@@ -110,7 +119,15 @@ public final class CaptchaListener implements Listener, AutoCloseable {
                     tasks.later(player, "close", 1L, player::closeInventory);
                     player.sendMessage(Component.text("인증이 완료되었습니다. 환영합니다!", NamedTextColor.GREEN));
                 } else if (clicked != null && clicked.getType() == Material.RED_STAINED_GLASS_PANE) {
-                    player.kick(Component.text("잘못된 아이템을 클릭했습니다. 다시 시도하세요.", NamedTextColor.RED));
+                    views.remove(player.getUniqueId());
+                    tasks.cancel(player.getUniqueId());
+                    securityManager.handleViolation(player, com.l7defense.module.DefenseModule.GUI_CAPTCHA, "잘못된 아이템 클릭");
+                    if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.GUI_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.passGuiCaptcha(player);
+                        tasks.later(player, "close", 1L, player::closeInventory);
+                    } else {
+                        player.kick(Component.text("잘못된 아이템을 클릭했습니다. 다시 시도하세요.", NamedTextColor.RED));
+                    }
                 }
             }
         }
@@ -150,7 +167,7 @@ public final class CaptchaListener implements Listener, AutoCloseable {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPlayerChat(AsyncPlayerChatEvent event) {
         Player player = event.getPlayer();
-        var session = securityManager.getSessions().get(player);
+        var session = securityManager.getSessions() != null ? securityManager.getSessions().get(player) : null;
         if (session != null && isAnyCaptchaPending(session.id())) {
             event.setCancelled(true);
             if (!securityManager.needsMapCaptcha(session.id())) {

@@ -20,9 +20,10 @@ public class ClientModDetectorListener implements PluginMessageListener {
 
     @Override
     public void onPluginMessageReceived(@NotNull String channel, @NotNull Player player, @NotNull byte[] message) {
+        if (channel == null || player == null) return;
         // 1. 월드 다운로더 (WDL) 및 맵 스틸러 감지
-        if (securityManager.getModuleManager().isEnabled(DefenseModule.MAP_STEALER)) {
-            String lowerChannel = channel.toLowerCase();
+        if (securityManager.getModuleManager() != null && securityManager.getModuleManager().isEnabled(DefenseModule.MAP_STEALER)) {
+            String lowerChannel = channel.toLowerCase(java.util.Locale.ROOT);
             if (lowerChannel.equals("wdl|init") || lowerChannel.equals("wdl|control") ||
                 lowerChannel.equals("wdl:init") || lowerChannel.equals("wdl:control") ||
                 lowerChannel.equals("worlddownloader:init")) {

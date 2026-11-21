@@ -14,7 +14,8 @@ public final class Hostnames {
         }
         int colon = host.indexOf(':');
         if (colon >= 0 && colon == host.lastIndexOf(':')) host = host.substring(0, colon);
-        return host.endsWith(".") ? host.substring(0, host.length() - 1) : host;
+        while (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+        return host;
     }
     public static boolean matches(String host, String allowed) {
         String normalized = normalize(allowed);

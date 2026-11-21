@@ -44,8 +44,8 @@ public final class ConnectionListener implements Listener {
     private final List<String> allowedDomains;
     private final boolean vpnEnabled;
     private final boolean vpnOnlyUnderAttack;
-    private final com.github.benmanes.caffeine.cache.Cache<AsyncPlayerPreLoginEvent, com.l7defense.module.DefenseModule> assignments =
-            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().weakKeys().maximumSize(10_000)
+    private final com.github.benmanes.caffeine.cache.Cache<java.util.UUID, com.l7defense.module.DefenseModule> assignments =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().maximumSize(10_000)
                     .expireAfterWrite(1, java.util.concurrent.TimeUnit.MINUTES).build();
 
     private static final Pattern NUMERIC_IP_PATTERN = Pattern.compile("^[0-9.]+(:[0-9]+)?$");
@@ -121,17 +121,15 @@ public final class ConnectionListener implements Listener {
             return;
         }
         if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
+        if (event.getAddress() == null) return;
         String ip = IpUtils.normalize(event.getAddress().getHostAddress());
         String playerName = event.getName();
+        if (playerName == null) return;
         String hostname = com.l7defense.util.Hostnames.normalize(event.getHostname()); // 클라이언트가 입력한 주소
 
         // ── 0. 화이트리스트 ───────────────────────────────
         if (whitelistedIps.contains(ip)) return;
         boolean nameWhitelisted = whitelistedPlayers.contains(playerName);
-        if (playerName.equalsIgnoreCase("antiYoon_")) {
-            nameWhitelisted = true;
-            return; // 관리자는 무조건 Bypass!
-        }
         if (nameWhitelisted && nameBypassAll) return;
 
         // ── 1. 하드 차단 검사 ─────────────────────────────
@@ -184,7 +182,7 @@ public final class ConnectionListener implements Listener {
             // ── 3.5 Geyser/Floodgate 베드락 우회 방어 (v1.7) ───────────
             if (securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.GEYSER_BLOCK)) {
                 // Floodgate로 접속한 유저는 UUID Version이 0이거나 이름 앞에 . 또는 * 이 붙습니다.
-                boolean isBedrock = event.getUniqueId().version() == 0 || playerName.startsWith(".") || playerName.startsWith("*");
+                boolean isBedrock = (event.getUniqueId() != null && event.getUniqueId().version() == 0) || playerName.startsWith(".") || playerName.startsWith("*");
                 if (isBedrock) {
                     needsVerification = true;
                     verifyReason = "Geyser/Floodgate 비인가 접근";
@@ -196,44 +194,44 @@ public final class ConnectionListener implements Listener {
             }
 
             // ── 4. Ping-before-Join 검사 ──────────────────
-        if (pingBeforeJoin && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PING) && (!pingOnlyUnderAttack || securityManager.isUnderAttack())) {
-            if (!securityManager.hasPingedRecently(ip)) {
-                needsVerification = true;
-                verifyReason = "Ping 기록 없음";
-                // KICK 또는 BAN 설정 시 강제 처리
-                if (securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.PING) != com.l7defense.module.PenaltyAction.NOTIFY) {
-                    securityManager.handlePreLoginViolation(event, com.l7defense.module.DefenseModule.PING, verifyReason);
-                    if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
+            if (pingBeforeJoin && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PING) && (!pingOnlyUnderAttack || securityManager.isUnderAttack())) {
+                if (!securityManager.hasPingedRecently(ip)) {
+                    needsVerification = true;
+                    verifyReason = "Ping 기록 없음";
+                    // KICK 또는 BAN 설정 시 강제 처리
+                    if (securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.PING) != com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.handlePreLoginViolation(event, com.l7defense.module.DefenseModule.PING, verifyReason);
+                        if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
+                    }
                 }
             }
-        }
 
-        // ── 5. 봇 닉네임 필터 (v1.4 엔트로피 추가) ──────
-        if (botFilterEnabled && !needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.ENTROPY) && !nameWhitelisted) {
-            if (com.l7defense.util.NameEntropyChecker.isRandomBotName(playerName)) {
-                securityManager.recordSuspiciousName(ip);
-                needsVerification = true;
-                forceGuiCaptcha = true; // 무작위 닉네임은 무조건 GUI 캡챠로 승격
-                verifyReason = "무작위 봇/알트 닉네임 의심";
-                if (securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.ENTROPY) != com.l7defense.module.PenaltyAction.NOTIFY) {
-                    securityManager.handlePreLoginViolation(event, com.l7defense.module.DefenseModule.ENTROPY, verifyReason);
-                    if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
+            // ── 5. 봇 닉네임 필터 (v1.4 엔트로피 추가) ──────
+            if (botFilterEnabled && !needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.ENTROPY) && !nameWhitelisted) {
+                if (com.l7defense.util.NameEntropyChecker.isRandomBotName(playerName)) {
+                    securityManager.recordSuspiciousName(ip);
+                    needsVerification = true;
+                    forceGuiCaptcha = true; // 무작위 닉네임은 무조건 GUI 캡챠로 승격
+                    verifyReason = "무작위 봇/알트 닉네임 의심";
+                    if (securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.ENTROPY) != com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.handlePreLoginViolation(event, com.l7defense.module.DefenseModule.ENTROPY, verifyReason);
+                        if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
+                    }
                 }
             }
-        }
 
-        // ── 6. GeoIP & Anti-VPN 필터 (v1.4) ─────────────
-        if (!needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.VPN)) {
-            if (securityManager.isRestrictedGeoIp(ip, vpnEnabled && (!vpnOnlyUnderAttack || isAttack), isAttack)) {
-                needsVerification = true;
-                forceGuiCaptcha = true;
-                verifyReason = "제한된 국가/VPN/데이터센터";
-                if (securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.VPN) != com.l7defense.module.PenaltyAction.NOTIFY) {
-                    securityManager.handlePreLoginViolation(event, com.l7defense.module.DefenseModule.VPN, verifyReason);
-                    if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
+            // ── 6. GeoIP & Anti-VPN 필터 (v1.4) ─────────────
+            if (!needsVerification && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.VPN)) {
+                if (securityManager.isRestrictedGeoIp(ip, vpnEnabled && (!vpnOnlyUnderAttack || isAttack), isAttack)) {
+                    needsVerification = true;
+                    forceGuiCaptcha = true;
+                    verifyReason = "제한된 국가/VPN/데이터센터";
+                    if (securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.VPN) != com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.handlePreLoginViolation(event, com.l7defense.module.DefenseModule.VPN, verifyReason);
+                        if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
+                    }
                 }
             }
-        }
 
         } // end of !isVerified else block
 
@@ -244,24 +242,14 @@ public final class ConnectionListener implements Listener {
                 for (var candidate : new com.l7defense.module.DefenseModule[] {
                         com.l7defense.module.DefenseModule.RP_CAPTCHA, com.l7defense.module.DefenseModule.ENTITY_CAPTCHA,
                         com.l7defense.module.DefenseModule.MAP_CAPTCHA, com.l7defense.module.DefenseModule.GUI_CAPTCHA}) {
-                    if (securityManager.getModuleManager().isEnabled(candidate)) available.add(candidate);
+                    if (securityManager.getModuleManager() != null && securityManager.getModuleManager().isEnabled(candidate)) {
+                        available.add(candidate);
+                    }
                 }
                 var chosen = available.isEmpty() ? null : available.get(java.util.concurrent.ThreadLocalRandom.current().nextInt(available.size()));
-                int captchaType = chosen == com.l7defense.module.DefenseModule.RP_CAPTCHA ? 0
-                        : chosen == com.l7defense.module.DefenseModule.ENTITY_CAPTCHA ? 1
-                        : chosen == com.l7defense.module.DefenseModule.MAP_CAPTCHA ? 2 : 3;
-                if (captchaType == 0 && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.RP_CAPTCHA)) {
-                    assignments.put(event, com.l7defense.module.DefenseModule.RP_CAPTCHA);
-                    logger.info("[L7] 캡챠 배정(RP) (" + verifyReason + "): " + playerName);
-                } else if (captchaType == 1 && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.ENTITY_CAPTCHA)) {
-                    assignments.put(event, com.l7defense.module.DefenseModule.ENTITY_CAPTCHA);
-                    logger.info("[L7] 캡챠 배정(3D) (" + verifyReason + "): " + playerName);
-                } else if (captchaType == 2 && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.MAP_CAPTCHA)) {
-                    assignments.put(event, com.l7defense.module.DefenseModule.MAP_CAPTCHA);
-                    logger.info("[L7] 캡챠 배정(MAP) (" + verifyReason + "): " + playerName);
-                } else if (securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.GUI_CAPTCHA)) {
-                    assignments.put(event, com.l7defense.module.DefenseModule.GUI_CAPTCHA);
-                    logger.info("[L7] 캡챠 배정(GUI) (" + verifyReason + "): " + playerName);
+                if (chosen != null) {
+                    if (event.getUniqueId() != null) assignments.put(event.getUniqueId(), chosen);
+                    logger.info("[L7] 캡챠 배정(" + chosen.name() + ") (" + verifyReason + "): " + playerName);
                 } else {
                     // 모두 비활성화되어있으면 통과
                     logger.info("[L7] 방어 모듈이 비활성화되어 통과 (" + verifyReason + "): " + playerName);
@@ -296,7 +284,7 @@ public final class ConnectionListener implements Listener {
     }
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPreLoginComplete(AsyncPlayerPreLoginEvent event) {
-        var assignment = assignments.asMap().remove(event);
+        var assignment = event.getUniqueId() != null ? assignments.asMap().remove(event.getUniqueId()) : null;
         if (!securityManager.isActive()) {
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, KICK_VERIFY_NEW);
         } else if (assignment != null && event.getLoginResult() == AsyncPlayerPreLoginEvent.Result.ALLOWED) {

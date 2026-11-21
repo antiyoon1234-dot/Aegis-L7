@@ -32,9 +32,13 @@ public final class PlayerSessions implements Listener, AutoCloseable {
         for (Player player : Bukkit.getOnlinePlayers()) register(player);
     }
 
-    public Snapshot get(Player player) { return sessions.get(player); }
+    public Snapshot get(Player player) {
+        if (player == null || closed) return null;
+        return sessions.get(player);
+    }
 
     private void register(Player player) {
+        if (player == null || closed) return;
         sessions.put(player, new Snapshot(player.getUniqueId(), IpUtils.getIp(player), UUID.randomUUID()));
     }
 
@@ -44,26 +48,28 @@ public final class PlayerSessions implements Listener, AutoCloseable {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
         Snapshot old = sessions.remove(event.getPlayer());
-        if (old != null) mailbox.keySet().removeIf(key -> key.session == old);
+        if (old != null) mailbox.keySet().removeIf(key -> old.equals(key.session));
     }
 
     // kind는 플러그인이 정한 고정 문자열만 사용하며 사용자 입력을 키로 사용하지 않습니다.
     public void submit(Player player, String kind, Runnable task) {
+        if (player == null || task == null || closed) return;
         Snapshot session = get(player);
-        if (closed || session == null) return;
+        if (session == null) return;
         ActionKey key = new ActionKey(session, kind);
         mailbox.putIfAbsent(key, new Action(player, task));
         if (closed || get(player) != session) mailbox.remove(key);
     }
 
     private void drain() {
+        if (closed) return;
         int remaining = 512;
         for (var entry : mailbox.entrySet()) {
             if (remaining-- == 0) break;
             Action action = mailbox.remove(entry.getKey());
             if (action == null || get(action.player) != entry.getKey().session || !action.player.isOnline()) continue;
             try { action.task.run(); }
-            catch (RuntimeException ex) { plugin.getLogger().log(Level.WARNING, "[L7] 플레이어 작업 실패", ex); }
+            catch (Throwable ex) { plugin.getLogger().log(Level.WARNING, "[L7] 플레이어 작업 실패", ex); }
         }
     }
 

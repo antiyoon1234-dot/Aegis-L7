@@ -169,9 +169,19 @@ public class SecurityManager {
      * BAN, KICK, NOTIFY 설정에 따라 알아서 처리합니다.
      */
     public void handleViolation(org.bukkit.entity.Player player, com.l7defense.module.DefenseModule module, String reason) {
-        if (closed || sessions == null) return;
-        if (org.bukkit.Bukkit.isPrimaryThread()) applyViolation(player, module, reason);
-        else sessions.submit(player, "violation-" + module.name(), () -> applyViolation(player, module, reason));
+        if (closed || player == null || module == null) return;
+        if (org.bukkit.Bukkit.isPrimaryThread()) {
+            applyViolation(player, module, reason);
+        } else if (sessions != null) {
+            sessions.submit(player, "violation-" + module.name(), () -> applyViolation(player, module, reason));
+        } else {
+            org.bukkit.plugin.Plugin pl = org.bukkit.plugin.java.JavaPlugin.getProvidingPlugin(getClass());
+            if (pl != null && pl.isEnabled()) {
+                org.bukkit.Bukkit.getScheduler().runTask(pl, () -> applyViolation(player, module, reason));
+            } else {
+                applyViolation(player, module, reason);
+            }
+        }
     }
 
     private void applyViolation(org.bukkit.entity.Player player, DefenseModule module, String reason) {
@@ -187,8 +197,11 @@ public class SecurityManager {
             player.kick(net.kyori.adventure.text.Component.text("비정상적인 접근/행동으로 강제 퇴장되었습니다.\n\n사유: " + reason, net.kyori.adventure.text.format.NamedTextColor.RED));
         } else {
             org.bukkit.Bukkit.getLogger().warning("[L7-Notify] " + player.getName() + "(" + ip + ") - " + reason);
+            player.sendMessage(net.kyori.adventure.text.Component.text("§e[L7 주의] 비정상적인 활동이 감지되었습니다: §f" + reason, net.kyori.adventure.text.format.NamedTextColor.YELLOW));
             for (org.bukkit.entity.Player p : org.bukkit.Bukkit.getOnlinePlayers()) {
-                if (p.isOp()) p.sendMessage(net.kyori.adventure.text.Component.text("[L7 경고] " + player.getName() + ": " + reason, net.kyori.adventure.text.format.NamedTextColor.YELLOW));
+                if (p.isOp() || p.hasPermission("l7defense.admin") || p.hasPermission("l7defense.alerts")) {
+                    p.sendMessage(net.kyori.adventure.text.Component.text("[L7 경고] " + player.getName() + ": " + reason, net.kyori.adventure.text.format.NamedTextColor.YELLOW));
+                }
             }
         }
     }
@@ -198,11 +211,12 @@ public class SecurityManager {
      * Player 객체가 생성되기 전이므로 AsyncPlayerPreLoginEvent를 통해 제어합니다.
      */
     public void handlePreLoginViolation(org.bukkit.event.player.AsyncPlayerPreLoginEvent event, com.l7defense.module.DefenseModule module, String reason) {
-        if (closed || moduleManager == null || !moduleManager.isEnabled(module)) return;
+        if (closed || event == null || moduleManager == null || !moduleManager.isEnabled(module)) return;
+        if (event.getAddress() == null) return;
 
         com.l7defense.module.PenaltyAction action = moduleManager.getPenalty(module);
-        String ip = event.getAddress().getHostAddress();
-        String name = event.getName();
+        String ip = IpUtils.normalize(event.getAddress().getHostAddress());
+        String name = event.getName() != null ? event.getName() : "unknown";
 
         if (action == com.l7defense.module.PenaltyAction.BAN) {
             blockIp(ip, reason);
@@ -235,9 +249,11 @@ public class SecurityManager {
     }
 
     public void offerCaptchaRetry(org.bukkit.entity.Player player) {
-        var snapshot = sessions.get(player);
-        if (snapshot != null && captchaRetryGranted.asMap().putIfAbsent(snapshot.ip(), Boolean.TRUE) == null) {
-            captchaRetries.put(new VerificationKey(snapshot.ip(), snapshot.id()), System.nanoTime());
+        if (player == null) return;
+        String ip = IpUtils.getIp(player);
+        UUID id = player.getUniqueId();
+        if (captchaRetryGranted.asMap().putIfAbsent(ip, Boolean.TRUE) == null) {
+            captchaRetries.put(new VerificationKey(ip, id), System.nanoTime());
         }
     }
 

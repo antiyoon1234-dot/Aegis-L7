@@ -28,6 +28,7 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
     private final PlayerTasks tasks;
     private final ConcurrentHashMap<UUID, Challenge> activeCaptchas = new ConcurrentHashMap<>();
     private final Random random = new java.security.SecureRandom();
+    private final Object mapLock = new Object();
     private final Deque<MapView> freeMaps = new ArrayDeque<>();
     private final Set<MapView> allMaps = new HashSet<>();
     private final NamespacedKey itemKey;
@@ -37,25 +38,35 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
         this.securityManager = securityManager;
         this.tasks = new PlayerTasks(plugin);
         this.itemKey = new NamespacedKey(plugin, "captcha-map");
-        for (int id : plugin.getConfig().getIntegerList("internal.captcha-map-ids")) {
-            MapView map = Bukkit.getMap(id);
-            if (map != null && allMaps.size() < 256 && allMaps.add(map)) freeMaps.add(map);
+        synchronized (mapLock) {
+            for (int id : plugin.getConfig().getIntegerList("internal.captcha-map-ids")) {
+                MapView map = Bukkit.getMap(id);
+                if (map != null && allMaps.size() < 256 && allMaps.add(map)) freeMaps.add(map);
+            }
         }
     }
 
     public void triggerMapCaptcha(Player player) {
         UUID id = player.getUniqueId();
         if (!player.isOnline() || !securityManager.needsMapCaptcha(id) || activeCaptchas.containsKey(id)) return;
-        MapView map = freeMaps.pollFirst();
-        if (map == null) {
-            if (allMaps.size() >= 256) {
-                player.kick(Component.text("캡챠 서버가 혼잡합니다. 잠시 후 다시 접속해주세요."));
-                return;
+        MapView map;
+        synchronized (mapLock) {
+            map = freeMaps.pollFirst();
+            if (map == null) {
+                if (allMaps.size() >= 256) {
+                    if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(DefenseModule.MAP_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.handleViolation(player, DefenseModule.MAP_CAPTCHA, "지도 캡챠 슬롯 포화 (주의 통과)");
+                        securityManager.passMapCaptcha(player);
+                    } else {
+                        player.kick(Component.text("캡챠 서버가 혼잡합니다. 잠시 후 다시 접속해주세요."));
+                    }
+                    return;
+                }
+                map = Bukkit.createMap(player.getWorld());
+                allMaps.add(map);
+                plugin.getConfig().set("internal.captcha-map-ids", allMaps.stream().map(MapView::getId).toList());
+                plugin.saveConfig();
             }
-            map = Bukkit.createMap(player.getWorld());
-            allMaps.add(map);
-            plugin.getConfig().set("internal.captcha-map-ids", allMaps.stream().map(MapView::getId).toList());
-            plugin.saveConfig();
         }
         clearRenderers(map);
         String answer = String.format(Locale.ROOT, "%04d", random.nextInt(10000));
@@ -87,7 +98,13 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
             // 강제 밴 처리: 전역 설정 변경 없이 현재 모듈 처벌 정책을 사용합니다.
             securityManager.handleViolation(player, DefenseModule.MAP_CAPTCHA, "캡챠 30초 타임아웃 미인증");
             plugin.getLogger().warning("[L7 Defense] " + player.getName() + " 캡챠 30초 미인증 처리됨.");
-            tasks.later(player, "retry", 20L, () -> triggerMapCaptcha(player));
+            if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(DefenseModule.MAP_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                securityManager.passMapCaptcha(player);
+            } else if (player.isOnline()) {
+                tasks.later(player, "retry", 20L, () -> {
+                    if (player.isOnline()) triggerMapCaptcha(player);
+                });
+            }
         }); // 30초 후 확인
     }
 
@@ -100,7 +117,8 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onChat(AsyncPlayerChatEvent event) {
         Player player = event.getPlayer();
-        var session = securityManager.getSessions().get(player);
+        if (player == null || event.getMessage() == null) return;
+        var session = securityManager.getSessions() != null ? securityManager.getSessions().get(player) : null;
         Challenge expected = session == null ? null : activeCaptchas.get(session.id());
         if (expected == null) return;
         event.setCancelled(true);
@@ -134,7 +152,9 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
         }
         player.getInventory().setHeldItemSlot(challenge.heldSlot);
         clearRenderers(challenge.map);
-        freeMaps.addLast(challenge.map);
+        synchronized (mapLock) {
+            freeMaps.addLast(challenge.map);
+        }
     }
 
     private void clearRenderers(MapView map) { new ArrayList<>(map.getRenderers()).forEach(map::removeRenderer); }
@@ -168,8 +188,10 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
             if (player != null) cleanup(player);
         }
         activeCaptchas.clear();
-        allMaps.forEach(this::clearRenderers);
-        freeMaps.clear();
-        allMaps.clear();
+        synchronized (mapLock) {
+            allMaps.forEach(this::clearRenderers);
+            freeMaps.clear();
+            allMaps.clear();
+        }
     }
 }

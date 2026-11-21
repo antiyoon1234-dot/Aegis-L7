@@ -11,6 +11,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,7 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 캡챠를 뚫고 들어온 악성 봇이 인벤토리 클릭, 상호작용 등을
  * 초당 수십/수백 번 전송하여 서버 틱을 저하시키는 것을 방지합니다.
  */
-public final class PacketSpamListener implements Listener {
+public final class PacketSpamListener implements Listener, AutoCloseable {
 
     private final SecurityManager securityManager;
     private final boolean enabled;
@@ -42,15 +43,20 @@ public final class PacketSpamListener implements Listener {
     }
 
     private boolean checkSpam(Player player) {
-        if (!enabled || !securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PACKET_SPAM)
-                || player.hasPermission("l7defense.admin")) return false;
+        if (player == null) return false;
+        boolean isSpamEnabled = securityManager.getModuleManager() != null ? securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.PACKET_SPAM) : enabled;
+        if (!isSpamEnabled || player.hasPermission("l7defense.admin")) return false;
 
         AtomicInteger count = actionCache.get(player.getUniqueId().toString(), k -> new AtomicInteger(0));
-
-        if (count.incrementAndGet() > maxActionsPerSecond) {
-            // 패킷 플러드 감지 -> 즉시 킥 및 IP 차단
-            securityManager.handleViolation(player, com.l7defense.module.DefenseModule.PACKET_SPAM, "인게임 패킷 스팸 (CPS 초과)");
-            return true;
+        if (count != null) {
+            int current = count.incrementAndGet();
+            if (current > maxActionsPerSecond) {
+                // 초과 시점 1회만 알림 발송하여 관리자 채팅 도배 방지
+                if (current == maxActionsPerSecond + 1) {
+                    securityManager.handleViolation(player, com.l7defense.module.DefenseModule.PACKET_SPAM, "인게임 패킷 스팸 (CPS 초과: " + maxActionsPerSecond + "/s)");
+                }
+                return true;
+            }
         }
         return false;
     }
@@ -69,5 +75,15 @@ public final class PacketSpamListener implements Listener {
         if (checkSpam(event.getPlayer())) {
             event.setCancelled(true);
         }
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        actionCache.invalidate(event.getPlayer().getUniqueId().toString());
+    }
+
+    @Override
+    public void close() {
+        actionCache.invalidateAll();
     }
 }

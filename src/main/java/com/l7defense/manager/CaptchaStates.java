@@ -8,12 +8,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /** 접속 전에는 TTL/용량 제한, 접속 후에는 명시적 세션 종료로 인증 상태를 관리합니다. */
-public final class CaptchaStates {
+public final class CaptchaStates implements AutoCloseable {
     private final Cache<UUID, DefenseModule> pending = Caffeine.newBuilder()
             .expireAfterWrite(1, TimeUnit.MINUTES).maximumSize(10_000).build();
     private final ConcurrentHashMap<UUID, DefenseModule> active = new ConcurrentHashMap<>();
 
     public void flag(UUID id, DefenseModule module) {
+        if (id == null || module == null) return;
         if (active.containsKey(id)) active.putIfAbsent(id, module);
         else pending.asMap().putIfAbsent(id, module);
     }
@@ -33,4 +34,5 @@ public final class CaptchaStates {
     public void discardPending(UUID id) { pending.invalidate(id); }
     public void quit(UUID id) { active.remove(id); pending.invalidate(id); }
     public void clear() { active.clear(); pending.invalidateAll(); }
+    @Override public void close() { clear(); }
 }

@@ -16,7 +16,7 @@ import java.util.*;
  * v1.9 조명 연산 폭탄 (Light Update Crasher) 차단
  * 발광석, 횃불 등 빛 업데이트를 유발하는 블록을 비정상적인 속도로 설치/파괴하는 핵(FastPlace/Nuker) 감지
  */
-public class BlockCrasherListener implements Listener {
+public class BlockCrasherListener implements Listener, AutoCloseable {
 
     private final SecurityManager securityManager;
 
@@ -46,32 +46,54 @@ public class BlockCrasherListener implements Listener {
     }
 
     private void handleBlockAction(Player player, Material blockType, org.bukkit.event.Cancellable event) {
-        if (!securityManager.getModuleManager().isEnabled(DefenseModule.LIGHT_CRASHER)) return;
+        if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.LIGHT_CRASHER)) return;
 
         UUID uuid = player.getUniqueId();
         Queue<BlockAction> history = blockHistory.computeIfAbsent(uuid, k -> new java.util.ArrayDeque<>());
         
         long now = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
-        while (!history.isEmpty() && now - history.peek().time >= 1000) history.poll();
-        history.add(new BlockAction(now, LIGHT_BLOCKS.contains(blockType)));
+        boolean isViolation = false;
 
-        // 조명 블록은 초당 12회 제한, 일반 블록은 초당 25회 제한 (기계적인 FastPlace 모드)
-        int threshold = 25;
-        
-        if (history.size() > threshold || history.stream().filter(BlockAction::light).count() > 12) {
-            long oldest = history.peek().time; // 가장 오래된 타임스탬프
-            
-            // 지정된 횟수의 블록 조작이 1초(1000ms) 이내에 일어났다면 (초당 threshold 회 이상)
-            if (now - oldest < 1000) {
-                event.setCancelled(true);
-                securityManager.handleViolation(player, DefenseModule.LIGHT_CRASHER, "비정상적 블록 설치/파괴 속도 (FastPlace/Nuker 조명 랙 방어)");
-                history.clear(); // 연속 밴 방지
+        synchronized (history) {
+            while (!history.isEmpty()) {
+                BlockAction head = history.peek();
+                if (head != null && now - head.time >= 1000) {
+                    history.poll();
+                } else {
+                    break;
+                }
             }
+            history.add(new BlockAction(now, LIGHT_BLOCKS.contains(blockType)));
+
+            // 조명 블록은 초당 12회 제한, 일반 블록은 초당 25회 제한 (기계적인 FastPlace 모드)
+            int threshold = 25;
+            long lightCount = 0;
+            for (BlockAction action : history) {
+                if (action.light()) lightCount++;
+            }
+
+            if (history.size() > threshold || lightCount > 12) {
+                BlockAction oldest = history.peek();
+                if (oldest != null && (now - oldest.time < 1000)) {
+                    isViolation = true;
+                    history.clear(); // 연속 밴 방지
+                }
+            }
+        }
+
+        if (isViolation) {
+            event.setCancelled(true);
+            securityManager.handleViolation(player, DefenseModule.LIGHT_CRASHER, "비정상적 블록 설치/파괴 속도 (FastPlace/Nuker 조명 랙 방어)");
         }
     }
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
         blockHistory.remove(event.getPlayer().getUniqueId());
+    }
+
+    @Override
+    public void close() {
+        blockHistory.clear();
     }
 }

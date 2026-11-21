@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 플레이어별 토글 상태는 {@link ConcurrentHashMap} 기반 {@link Set}으로
  * 스레드 안전하게 관리됩니다.
  */
-public final class AlertManager {
+public final class AlertManager implements AutoCloseable {
 
     private final L7DefensePlugin plugin;
     private final SecurityManager securityManager;
@@ -77,9 +77,10 @@ public final class AlertManager {
                             .decoration(TextDecoration.BOLD, true))
                     .append(Component.text(", 최근 접속 시도 폭주 중)", NamedTextColor.GRAY));
 
-            // 온라인 OP 플레이어에게 전송 (알림 비활성화 플레이어 제외)
+            // 온라인 관리자 플레이어에게 전송 (알림 비활성화 플레이어 제외)
             for (Player player : Bukkit.getOnlinePlayers()) {
-                if (player.isOp() && !mutedPlayers.contains(player.getUniqueId())) {
+                if ((player.isOp() || player.hasPermission("l7defense.admin") || player.hasPermission("l7defense.alerts"))
+                        && !mutedPlayers.contains(player.getUniqueId())) {
                     player.sendMessage(alertMessage);
                 }
             }
@@ -103,8 +104,7 @@ public final class AlertManager {
      * @return 토글 후 알림이 활성화되었으면 true
      */
     public boolean togglePlayerAlert(UUID playerId) {
-        if (mutedPlayers.contains(playerId)) {
-            mutedPlayers.remove(playerId);
+        if (mutedPlayers.remove(playerId)) {
             return true; // 알림 활성화됨
         } else {
             mutedPlayers.add(playerId);
@@ -131,5 +131,11 @@ public final class AlertManager {
     /** 전역 알림 활성화 여부를 반환합니다. */
     public boolean isGlobalAlertEnabled() {
         return globalAlertEnabled;
+    }
+
+    @Override
+    public void close() {
+        stopAlertScheduler();
+        mutedPlayers.clear();
     }
 }

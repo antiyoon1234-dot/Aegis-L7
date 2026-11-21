@@ -17,7 +17,9 @@ import java.util.logging.Logger;
  * <p>
  * 국가 코드를 확인하여 허용되지 않은 국가의 IP를 공격 시 완벽히 락다운(차단)합니다.
  */
-public final class GeoIpManager {
+public final class GeoIpManager implements AutoCloseable {
+
+    private static final java.util.regex.Pattern COUNTRY_PATTERN = java.util.regex.Pattern.compile("^[A-Z]{2}$");
 
     private final Logger logger;
     private final boolean enabled;
@@ -95,11 +97,11 @@ public final class GeoIpManager {
     }
 
     private GeoData fetchGeoData(String ip) {
-        if (!requests.tryAcquire()) return FAILURE;
+        if (!IpUtils.isLiteral(ip) || !requests.tryAcquire()) return FAILURE;
         HttpURLConnection conn = null;
         try {
             if (!reserveRequest()) return FAILURE;
-            URL url = new URL(String.format(API_URL, ip));
+            URL url = java.net.URI.create(String.format(API_URL, ip)).toURL();
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(800);
@@ -129,7 +131,7 @@ public final class GeoIpManager {
             var json = com.google.gson.JsonParser.parseString(response).getAsJsonObject();
             if (!json.has("status") || !"success".equals(json.get("status").getAsString())) return FAILURE;
             String country = json.get("countryCode").getAsString();
-            if (!country.matches("[A-Z]{2}") || !json.get("proxy").getAsJsonPrimitive().isBoolean()
+            if (!COUNTRY_PATTERN.matcher(country).matches() || !json.get("proxy").getAsJsonPrimitive().isBoolean()
                     || !json.get("hosting").getAsJsonPrimitive().isBoolean()) return FAILURE;
             return new GeoData(json.get("proxy").getAsBoolean() || json.get("hosting").getAsBoolean(), country, false);
         } catch (RuntimeException ex) { return FAILURE; }

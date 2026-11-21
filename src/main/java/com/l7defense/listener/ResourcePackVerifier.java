@@ -29,7 +29,7 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
     private final boolean enabled;
 
     // 타임아웃 킥 관리를 위한 작업 맵
-    private final java.util.Map<UUID, UUID> pendingVerifications = new java.util.HashMap<>();
+    private final java.util.Map<UUID, UUID> pendingVerifications = new ConcurrentHashMap<>();
     private final com.l7defense.util.PlayerTasks tasks;
 
     private static final String DUMMY_URL = "https://raw.githubusercontent.com/antiyoon1234-dot/Aegis-L7/main/src/main/resources/captcha/verification-v1.zip";
@@ -70,8 +70,13 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
             } catch (RuntimeException ex) {
                 pendingVerifications.remove(player.getUniqueId());
                 plugin.getLogger().warning("[L7] 리소스팩 전송 실패: " + ex.getMessage());
-                player.kick(Component.text("리소스팩 검증을 시작할 수 없습니다. 관리자에게 문의해주세요."));
-                retryIfKickCancelled(player);
+                if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.RP_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                    securityManager.handleViolation(player, com.l7defense.module.DefenseModule.RP_CAPTCHA, "리소스팩 전송 불가 (주의 통과)");
+                    securityManager.passResourcePackCaptcha(player);
+                } else {
+                    player.kick(Component.text("리소스팩 검증을 시작할 수 없습니다. 관리자에게 문의해주세요."));
+                    retryIfKickCancelled(player);
+                }
                 return;
             }
 
@@ -82,9 +87,14 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
                     pendingVerifications.remove(player.getUniqueId());
                     if (player.isOnline()) {
                         plugin.getLogger().warning("[L7] 리소스팩 캡챠 타임아웃: " + player.getName());
-                        securityManager.offerCaptchaRetry(player);
-                        player.kick(Component.text("리소스팩 다운로드에 실패했습니다. (타임아웃)\n\n서버 리소스팩 설정을 [사용]으로 변경 후 재접속해주세요.", NamedTextColor.RED));
-                        retryIfKickCancelled(player);
+                        securityManager.handleViolation(player, com.l7defense.module.DefenseModule.RP_CAPTCHA, "리소스팩 캡챠 타임아웃");
+                        if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.RP_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                            securityManager.passResourcePackCaptcha(player);
+                        } else {
+                            securityManager.offerCaptchaRetry(player);
+                            player.kick(Component.text("리소스팩 다운로드에 실패했습니다. (타임아웃)\n\n서버 리소스팩 설정을 [사용]으로 변경 후 재접속해주세요.", NamedTextColor.RED));
+                            retryIfKickCancelled(player);
+                        }
                     }
                 }
             });
@@ -109,8 +119,12 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
                 case DECLINED:
                     tasks.cancel(uuid); pendingVerifications.remove(uuid); // 봇이거나 거부한 유저 차단
                     securityManager.handleViolation(player, com.l7defense.module.DefenseModule.RP_CAPTCHA, "리소스팩 캡챠 거부/실패");
-                    player.kick(Component.text("서버 접속을 위해 리소스팩 수락이 필수입니다.", NamedTextColor.RED));
-                    retryIfKickCancelled(player);
+                    if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.RP_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.passResourcePackCaptcha(player);
+                    } else {
+                        player.kick(Component.text("서버 접속을 위해 리소스팩 수락이 필수입니다.", NamedTextColor.RED));
+                        retryIfKickCancelled(player);
+                    }
                     break;
                 case FAILED_DOWNLOAD:
                 case INVALID_URL:
@@ -118,9 +132,14 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
                 case DISCARDED:
                     tasks.cancel(uuid);
                     pendingVerifications.remove(uuid);
-                    securityManager.offerCaptchaRetry(player);
-                    player.kick(Component.text("리소스팩 다운로드/적용에 실패했습니다. 잠시 후 다시 시도해주세요.", NamedTextColor.RED));
-                    retryIfKickCancelled(player);
+                    securityManager.handleViolation(player, com.l7defense.module.DefenseModule.RP_CAPTCHA, "리소스팩 다운로드/적용 실패");
+                    if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.RP_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.passResourcePackCaptcha(player);
+                    } else {
+                        securityManager.offerCaptchaRetry(player);
+                        player.kick(Component.text("리소스팩 다운로드/적용에 실패했습니다. 잠시 후 다시 시도해주세요.", NamedTextColor.RED));
+                        retryIfKickCancelled(player);
+                    }
                     break;
                 case DOWNLOADED:
                 case ACCEPTED:
@@ -143,6 +162,9 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
     @Override public void close() { tasks.close(); pendingVerifications.clear(); }
 
     private void retryIfKickCancelled(Player player) {
-        tasks.later(player, "retry", 20L, () -> startVerification(player));
+        if (!player.isOnline()) return;
+        tasks.later(player, "retry", 20L, () -> {
+            if (player.isOnline()) startVerification(player);
+        });
     }
 }

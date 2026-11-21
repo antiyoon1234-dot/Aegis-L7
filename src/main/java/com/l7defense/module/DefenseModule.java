@@ -18,7 +18,8 @@ public enum DefenseModule {
     HONEYPOT("honeypot", "투명 NPC 허니팟 (킬아우라 감지)"),
     MACRO_CHECK("macro_check", "마우스 매크로 주파수 분석 (Auto-Clicker)"),
     MAP_STEALER("map_stealer", "월드 다운로더(WDL) 맵 유출 차단"),
-    LIGHT_CRASHER("light_crasher", "조명 연산 랙(FastPlace/Nuker) 차단");
+    LIGHT_CRASHER("light_crasher", "조명 연산 랙(FastPlace/Nuker) 차단"),
+    ANTI_XRAY("anti_xray", "통계 및 채굴 패턴 기반 엑스레이(X-Ray) 감지");
 
     private final String id;
     private final String description;

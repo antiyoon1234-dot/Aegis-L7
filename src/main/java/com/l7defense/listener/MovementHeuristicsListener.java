@@ -4,6 +4,7 @@ import com.l7defense.util.IpUtils;
 import com.l7defense.manager.SecurityManager;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -17,7 +18,7 @@ import org.bukkit.event.player.PlayerMoveEvent;
  * 봇들은 목표를 향해 인간이 불가능한 속도(1틱 만에 정확히 180도)로 시점을 꺾거나(Snap Aim),
  * Pitch(위아래 고개 각도)가 완벽한 정수(예: 0.0, 90.0)로 고정된 채 움직이는 경우가 많습니다.
  */
-public final class MovementHeuristicsListener implements Listener {
+public final class MovementHeuristicsListener implements Listener, AutoCloseable {
 
     private final SecurityManager securityManager;
     private final boolean enabled;
@@ -31,15 +32,17 @@ public final class MovementHeuristicsListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerMove(PlayerMoveEvent event) {
-        if (!enabled || !securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.MOVEMENT)) return;
+        boolean isMoveEnabled = securityManager.getModuleManager() != null ? securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.MOVEMENT) : enabled;
+        if (!isMoveEnabled) return;
         if (event instanceof org.bukkit.event.player.PlayerTeleportEvent || event.getTo() == null) return;
 
         Player player = event.getPlayer();
-        if (player.hasPermission("l7defense.admin")) return;
+        if (player == null || player.hasPermission("l7defense.admin")) return;
+        if (player.isInsideVehicle() || player.isDead() || player.getGameMode() == GameMode.SPECTATOR) return;
 
         Location from = event.getFrom();
         Location to = event.getTo();
-        if (from.getWorld() != to.getWorld() || !Float.isFinite(to.getYaw()) || !Float.isFinite(to.getPitch())) return;
+        if (from == null || from.getWorld() != to.getWorld() || !Float.isFinite(to.getYaw()) || !Float.isFinite(to.getPitch())) return;
 
         // 시점 이동이 있는 경우
         if (from.getYaw() != to.getYaw() || from.getPitch() != to.getPitch()) {
@@ -78,4 +81,9 @@ public final class MovementHeuristicsListener implements Listener {
     }
 
     @EventHandler public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) { evidence.invalidate(event.getPlayer().getUniqueId()); }
+
+    @Override
+    public void close() {
+        evidence.invalidateAll();
+    }
 }

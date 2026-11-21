@@ -35,20 +35,20 @@ public class ModuleConfigManager {
         for (DefenseModule module : DefenseModule.values()) {
             String path = "dynamic-modules." + module.getId();
 
-            // config.yml에 없으면 기본값으로 생성
+            // config.yml에 없으면 기본값(NOTIFY 주의)으로 생성
             if (!config.contains(path)) {
                 config.set(path + ".enabled", true);
-                config.set(path + ".penalty", "BAN");
+                config.set(path + ".penalty", "NOTIFY");
             }
 
             boolean enabled = config.getBoolean(path + ".enabled", true);
-            String penaltyStr = config.getString(path + ".penalty", "BAN").toUpperCase(java.util.Locale.ROOT);
+            String penaltyStr = config.getString(path + ".penalty", "NOTIFY").toUpperCase(java.util.Locale.ROOT);
 
             PenaltyAction action;
             try {
                 action = PenaltyAction.valueOf(penaltyStr);
             } catch (Exception e) {
-                action = PenaltyAction.BAN;
+                action = PenaltyAction.NOTIFY;
             }
 
             states.put(module, new ModuleState(enabled, action));
@@ -57,21 +57,27 @@ public class ModuleConfigManager {
     }
 
     public boolean isEnabled(DefenseModule module) {
-        return states.get(module).enabled;
+        if (module == null) return false;
+        ModuleState state = states.get(module);
+        return state != null && state.enabled;
     }
 
     public PenaltyAction getPenalty(DefenseModule module) {
-        return states.get(module).penalty;
+        if (module == null) return PenaltyAction.NOTIFY;
+        ModuleState state = states.get(module);
+        return state != null ? state.penalty : PenaltyAction.NOTIFY;
     }
 
     public void setEnabled(DefenseModule module, boolean enabled) {
-        states.compute(module, (key, old) -> new ModuleState(enabled, old.penalty));
+        if (module == null) return;
+        states.compute(module, (key, old) -> new ModuleState(enabled, old != null ? old.penalty : PenaltyAction.NOTIFY));
         plugin.getConfig().set("dynamic-modules." + module.getId() + ".enabled", enabled);
         plugin.saveConfig();
     }
 
     public void setPenalty(DefenseModule module, PenaltyAction penalty) {
-        states.compute(module, (key, old) -> new ModuleState(old.enabled, penalty));
+        if (module == null || penalty == null) return;
+        states.compute(module, (key, old) -> new ModuleState(old != null ? old.enabled : true, penalty));
         plugin.getConfig().set("dynamic-modules." + module.getId() + ".penalty", penalty.name());
         plugin.saveConfig();
     }
