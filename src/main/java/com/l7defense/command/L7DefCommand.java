@@ -74,12 +74,52 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
                 }
                 return true;
             }
+            if (args.length >= 2 && args[1].equalsIgnoreCase("decoy")) {
+                if (!(sender instanceof org.bukkit.entity.Player player)) {
+                    sender.sendMessage("§c이 명령어는 인게임 플레이어만 실행할 수 있습니다.");
+                    return true;
+                }
+                if (pxManager == null) {
+                    sender.sendMessage("§c[L7-AntiXray] 패킷 매니저가 초기화되지 않았습니다.");
+                    return true;
+                }
+                int dist = 3;
+                if (args.length >= 3) {
+                    try { dist = Math.max(1, Math.min(15, Integer.parseInt(args[2]))); } catch (NumberFormatException ignored) {}
+                }
+                org.bukkit.Location eye = player.getEyeLocation();
+                org.bukkit.util.Vector dir = eye.getDirection().normalize();
+                org.bukkit.Location target = eye.clone().add(dir.multiply(dist));
+                org.bukkit.block.Block b = target.getBlock();
+                org.bukkit.Material fakeMat = player.getWorld().getEnvironment() == org.bukkit.World.Environment.NETHER
+                        ? org.bukkit.Material.ANCIENT_DEBRIS
+                        : (target.getBlockY() < 0 ? org.bukkit.Material.DEEPSLATE_DIAMOND_ORE : org.bukkit.Material.DIAMOND_ORE);
+                pxManager.injectDecoy(player, b.getLocation(), fakeMat);
+                player.sendMessage("§a[L7-AntiXray] 시선 방향 " + dist + "블록 앞 벽 속에 가짜 광석 허니팟을 주입했습니다!");
+                player.sendMessage("§7위치: §e" + b.getWorld().getName() + " " + b.getX() + ", " + b.getY() + ", " + b.getZ() + " §7(가짜 광석: §b" + fakeMat.name() + "§7)");
+                player.sendMessage("§e[테스트 가이드] §f엑스레이(ESP/텍스처팩)를 켜면 해당 벽 속 다이아몬드가 보입니다. 벽을 파고 들어가 채굴하면 즉시 적발 경고가 발동합니다!");
+                return true;
+            }
+            if (args.length >= 2 && args[1].equalsIgnoreCase("clear")) {
+                if (pxManager != null && sender instanceof org.bukkit.entity.Player player) {
+                    pxManager.clearDecoys(player);
+                    sender.sendMessage("§a[L7-AntiXray] 활성화된 가짜 광석 허니팟을 모두 초기화했습니다.");
+                } else {
+                    sender.sendMessage("§c플레이어만 실행 가능합니다.");
+                }
+                return true;
+            }
             sender.sendMessage("§b[L7 엑스레이 방어 및 패킷 난수화 상태]");
             boolean active = pxManager != null && pxManager.isPaperEngineMode2Active();
             sender.sendMessage("§7Paper Engine-Mode 2: " + (active ? "§a[가동 중]" : "§c[미적용/설정필요]"));
             sender.sendMessage("§7패킷 마스킹(은닉): " + (pxManager != null && pxManager.isClientMaskingEnabled() ? "§a[ON]" : "§c[OFF]"));
             sender.sendMessage("§7허니팟 패킷 트랩: " + (pxManager != null && pxManager.isDecoysEnabled() ? "§a[ON]" : "§c[OFF]"));
+            if (sender instanceof org.bukkit.entity.Player player && pxManager != null) {
+                sender.sendMessage("§7현재 활성 허니팟 수: §e" + pxManager.getActiveDecoyCount(player.getUniqueId()) + "개");
+            }
             sender.sendMessage("§e/l7def xray engine2 §7- Paper Engine-Mode 2 즉시 강제 적용");
+            sender.sendMessage("§e/l7def xray decoy [거리] §7- 현재 시선 앞 벽 속에 테스트용 가짜 다이아 허니팟 주입");
+            sender.sendMessage("§e/l7def xray clear §7- 내 주변 가짜 허니팟 초기화");
             return true;
         }
 
@@ -189,6 +229,8 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             completions.add("reload");
         } else if (args.length == 2 && args[0].equalsIgnoreCase("xray")) {
             completions.add("engine2");
+            completions.add("decoy");
+            completions.add("clear");
             completions.add("status");
         } else if (args.length == 2 && (args[0].equalsIgnoreCase("toggle") || args[0].equalsIgnoreCase("penalty") || args[0].equalsIgnoreCase("test"))) {
             for (DefenseModule mod : DefenseModule.values()) {

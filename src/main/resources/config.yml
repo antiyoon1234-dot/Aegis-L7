@@ -112,6 +112,18 @@ anti_xray:
     client-packet-masking: true
     # ESP를 켠 유저를 유인하기 위해 밀폐된 암석에 가짜 다이아몬드 패킷 주입 (적발 시 즉각 경고)
     packet-decoy-traps: true
+    # 유저 주변에 유지할 자동 가짜 다이아 허니팟 개수 (1~5)
+    max-decoys-per-player: 3
+    # 허니팟 자동 배치 반경 (최소 4블록, 최대 8블록)
+    decoy-min-distance: 4
+    decoy-max-distance: 8
+  heuristics:
+    # 비정상 채광 통계 감지 (최근 5분 내 최소 총 채굴 블록 수)
+    min-total-blocks: 12
+    # 최소 희귀 광석 채굴 수 (다이아몬드, 고대잔해 등)
+    min-rare-ores: 3
+    # 희귀 광석 채굴 비율 임계치 (0.20 = 20%)
+    rare-ore-ratio: 0.20
 
 # ─── 알림 및 예외 처리 ───
 

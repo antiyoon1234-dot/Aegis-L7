@@ -140,4 +140,77 @@ class PacketAntiXrayTest {
         assertFalse(packetManager.isDecoy(player, loc));
         verify(securityManager, times(1)).handleViolation(eq(player), eq(DefenseModule.ANTI_XRAY), contains("X-Ray ESP 패킷 트랩 적발"));
     }
+
+    @Test
+    @DisplayName("PacketAntiXrayManager: 인접 블록 파괴 시 허니팟이 해제되지 않고 유지되는지 검증")
+    void testAdjacentBlockBreakDoesNotDisarmDecoy() {
+        PacketAntiXrayManager packetManager = new PacketAntiXrayManager(plugin, securityManager, true, false, true, true);
+
+        Location decoyLoc = new Location(world, 10, -30, 10);
+        packetManager.injectDecoy(player, decoyLoc, Material.DEEPSLATE_DIAMOND_ORE);
+        assertTrue(packetManager.isDecoy(player, decoyLoc));
+
+        // 허니팟 바로 앞 인접 블록 파괴
+        Block adjacentBlock = Mockito.mock(Block.class);
+        Location adjLoc = new Location(world, 9, -30, 10);
+        when(adjacentBlock.getLocation()).thenReturn(adjLoc);
+        Block defaultNeighbor = Mockito.mock(Block.class);
+        when(defaultNeighbor.getLocation()).thenReturn(new Location(world, 0, 0, 0));
+        when(adjacentBlock.getRelative(any(BlockFace.class))).thenReturn(defaultNeighbor);
+
+        Block eastNeighbor = Mockito.mock(Block.class);
+        when(eastNeighbor.getLocation()).thenReturn(decoyLoc);
+        when(adjacentBlock.getRelative(BlockFace.EAST)).thenReturn(eastNeighbor);
+
+        packetManager.revealAdjacentBlocks(player, adjacentBlock);
+
+        // 인접 블록이 파괴되어도 허니팟은 여전히 유지되어야 함 (투시 유저 적발 대기)
+        assertTrue(packetManager.isDecoy(player, decoyLoc));
+
+        // clearDecoys 호출 시 정상 제거 확인
+        packetManager.clearDecoys(player);
+        assertFalse(packetManager.isDecoy(player, decoyLoc));
+        assertEquals(0, packetManager.getActiveDecoyCount(playerUuid));
+    }
+
+    @Test
+    @DisplayName("PacketAntiXrayManager: deployAutomaticDecoys 밀폐 암석 자동 감지 및 가짜 다이아 주입 검증")
+    void testDeployAutomaticDecoys() {
+        when(player.isOnline()).thenReturn(true);
+        when(world.getMinHeight()).thenReturn(-64);
+        when(world.getMaxHeight()).thenReturn(320);
+
+        PacketAntiXrayManager packetManager = new PacketAntiXrayManager(
+                plugin, securityManager, true, false, true, true, 2, 3, 5
+        );
+
+        Block solidBlock = Mockito.mock(Block.class);
+        when(solidBlock.getType()).thenReturn(Material.DEEPSLATE);
+        for (BlockFace face : new BlockFace[]{BlockFace.UP, BlockFace.DOWN, BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
+            Block occl = Mockito.mock(Block.class);
+            when(occl.getType()).thenReturn(Material.DEEPSLATE);
+            when(solidBlock.getRelative(face)).thenReturn(occl);
+        }
+
+        when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenAnswer(invocation -> {
+            Block b = Mockito.mock(Block.class);
+            when(b.getType()).thenReturn(Material.DEEPSLATE);
+            int x = invocation.getArgument(0);
+            int y = invocation.getArgument(1);
+            int z = invocation.getArgument(2);
+            when(b.getLocation()).thenReturn(new Location(world, x, y, z));
+            for (BlockFace face : new BlockFace[]{BlockFace.UP, BlockFace.DOWN, BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST}) {
+                Block occl = Mockito.mock(Block.class);
+                when(occl.getType()).thenReturn(Material.DEEPSLATE);
+                when(b.getRelative(face)).thenReturn(occl);
+            }
+            return b;
+        });
+
+        Location center = new Location(world, 0, -20, 0);
+        packetManager.deployAutomaticDecoys(player, center);
+
+        assertTrue(packetManager.getActiveDecoyCount(playerUuid) > 0);
+        assertTrue(packetManager.getActiveDecoyCount(playerUuid) <= 2);
+    }
 }

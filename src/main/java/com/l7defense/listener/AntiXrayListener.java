@@ -82,13 +82,13 @@ public class AntiXrayListener implements Listener, AutoCloseable {
 
     private com.l7defense.manager.PacketAntiXrayManager packetAntiXrayManager;
 
-    // 기본 임계치 설정 (최소 채굴 수 25개, 최소 희귀광석 6개, 희귀광석 비율 25% 이상)
+    // 기본 임계치 설정 (최소 채굴 수 12개, 최소 희귀광석 3개, 희귀광석 비율 20% 이상)
     private final int minTotalBlocks;
     private final int minRareOres;
     private final double rareOreRatioThreshold;
 
     public AntiXrayListener(SecurityManager securityManager) {
-        this(securityManager, 25, 6, 0.25);
+        this(securityManager, 12, 3, 0.20);
     }
 
     public AntiXrayListener(SecurityManager securityManager, int minTotalBlocks, int minRareOres, double rareOreRatioThreshold) {
@@ -97,6 +97,10 @@ public class AntiXrayListener implements Listener, AutoCloseable {
         this.minRareOres = minRareOres;
         this.rareOreRatioThreshold = rareOreRatioThreshold;
     }
+
+    public int getMinTotalBlocks() { return minTotalBlocks; }
+    public int getMinRareOres() { return minRareOres; }
+    public double getRareOreRatioThreshold() { return rareOreRatioThreshold; }
 
     public void setPacketAntiXrayManager(com.l7defense.manager.PacketAntiXrayManager packetAntiXrayManager) {
         this.packetAntiXrayManager = packetAntiXrayManager;

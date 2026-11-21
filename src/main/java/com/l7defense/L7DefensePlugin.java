@@ -226,14 +226,24 @@ public final class L7DefensePlugin extends JavaPlugin {
         boolean xrayPaperAuto = config.getBoolean("anti_xray.packet-obfuscation.auto-configure-paper-engine2", true);
         boolean xrayMasking = config.getBoolean("anti_xray.packet-obfuscation.client-packet-masking", true);
         boolean xrayDecoys = config.getBoolean("anti_xray.packet-obfuscation.packet-decoy-traps", true);
+        int maxDecoys = config.getInt("anti_xray.packet-obfuscation.max-decoys-per-player", 3);
+        int decoyMinDist = config.getInt("anti_xray.packet-obfuscation.decoy-min-distance", 4);
+        int decoyMaxDist = config.getInt("anti_xray.packet-obfuscation.decoy-max-distance", 8);
+
+        int minTotal = config.getInt("anti_xray.heuristics.min-total-blocks", 12);
+        int minRare = config.getInt("anti_xray.heuristics.min-rare-ores", 3);
+        double ratio = config.getDouble("anti_xray.heuristics.rare-ore-ratio", 0.20);
 
         com.l7defense.manager.PacketAntiXrayManager packetAntiXray = new com.l7defense.manager.PacketAntiXrayManager(
-                this, securityManager, xrayPacketEn, xrayPaperAuto, xrayMasking, xrayDecoys
+                this, securityManager, xrayPacketEn, xrayPaperAuto, xrayMasking, xrayDecoys,
+                maxDecoys, decoyMinDist, decoyMaxDist
         );
         this.packetAntiXrayManager = packetAntiXray;
         lifecycles.add(packetAntiXray);
 
-        com.l7defense.listener.AntiXrayListener antiXrayListener = new com.l7defense.listener.AntiXrayListener(securityManager);
+        com.l7defense.listener.AntiXrayListener antiXrayListener = new com.l7defense.listener.AntiXrayListener(
+                securityManager, minTotal, minRare, ratio
+        );
         antiXrayListener.setPacketAntiXrayManager(packetAntiXray);
         lifecycles.add(antiXrayListener);
         pm.registerEvents(antiXrayListener, this);
