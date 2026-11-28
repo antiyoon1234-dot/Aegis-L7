@@ -61,7 +61,23 @@ public final class EntityCaptchaListener implements Listener, AutoCloseable {
     public void spawnCaptchaEntity(Player player) {
         if (!player.isOnline() || !securityManager.needsEntityCaptcha(player.getUniqueId())) return;
         remove(player.getUniqueId());
-        Location loc = player.getLocation().add(0, 1.5, 0).add(player.getLocation().getDirection().multiply(2.0));
+
+        // 아머스탠드 헬멧(초록 블록)은 발 위치 +1.7 높이에 렌더링되므로 발 높이를 플레이어 발 기준(y)으로 맞추고
+        // 정면 수평 방향으로 벽 충돌을 피해 1.2~2.2블록 앞에 배치하여 천장/벽 끼임을 방지합니다.
+        org.bukkit.util.Vector dir = player.getLocation().getDirection().setY(0);
+        if (dir.lengthSquared() < 1e-4) {
+            dir = new org.bukkit.util.Vector(0, 0, 1);
+        } else {
+            dir.normalize();
+        }
+        Location loc = player.getLocation().clone();
+        for (double step = 0.5; step <= 2.2; step += 0.5) {
+            Location candidate = player.getLocation().clone().add(dir.clone().multiply(step));
+            if (candidate.getBlock().getType().isSolid() || candidate.clone().add(0, 1, 0).getBlock().getType().isSolid()) {
+                break;
+            }
+            loc = candidate;
+        }
 
         ArmorStand stand;
         try {
@@ -81,9 +97,28 @@ public final class EntityCaptchaListener implements Listener, AutoCloseable {
         stand.setInvulnerable(false);
         stand.setPersistent(false);
         stand.setCollidable(false);
+        try {
+            stand.addDisabledSlots(
+                    org.bukkit.inventory.EquipmentSlot.HEAD,
+                    org.bukkit.inventory.EquipmentSlot.CHEST,
+                    org.bukkit.inventory.EquipmentSlot.LEGS,
+                    org.bukkit.inventory.EquipmentSlot.FEET,
+                    org.bukkit.inventory.EquipmentSlot.HAND,
+                    org.bukkit.inventory.EquipmentSlot.OFF_HAND
+            );
+        } catch (Throwable ignored) {}
         stand.getEquipment().setHelmet(new ItemStack(Material.LIME_CONCRETE));
         stand.customName(Component.text("클릭하여 봇 방지 통과", NamedTextColor.GREEN));
         stand.setCustomNameVisible(true);
+
+        // 다른 유저 화면에 타인의 캡챠 엔티티가 보이지 않도록 숨김 처리
+        try {
+            for (Player other : Bukkit.getOnlinePlayers()) {
+                if (!other.getUniqueId().equals(player.getUniqueId())) {
+                    other.hideEntity(plugin, stand);
+                }
+            }
+        } catch (Throwable ignored) {}
 
         captchaEntities.put(player.getUniqueId(), stand);
         player.sendMessage(Component.text("눈앞의 초록색 블록(엔티티)을 좌클릭하여 타격하세요!", NamedTextColor.RED));
@@ -156,6 +191,11 @@ public final class EntityCaptchaListener implements Listener, AutoCloseable {
 
     @EventHandler
     public void protectEquipment(org.bukkit.event.player.PlayerInteractEntityEvent event) {
+        if (captchaEntities.containsValue(event.getRightClicked())) event.setCancelled(true);
+    }
+
+    @EventHandler
+    public void protectArmorStandManipulate(org.bukkit.event.player.PlayerArmorStandManipulateEvent event) {
         if (captchaEntities.containsValue(event.getRightClicked())) event.setCancelled(true);
     }
 

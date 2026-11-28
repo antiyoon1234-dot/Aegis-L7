@@ -263,4 +263,38 @@ class PacketAntiXrayTest {
         assertTrue(PaperAntiXrayConfigurator.applyEngineMode2(tempDir, Logger.getLogger("test")));
         assertEquals(mtimeBefore, configFile.lastModified());
     }
+
+    @Test
+    @DisplayName("PacketAntiXrayManager: 타 월드(네더 등) 이동 후 만료 허니팟 정리 시 교차 월드 고스트 블록 패킷 미전송 검증")
+    void testCrossWorldDecoyCleanupNeverSendsForeignWorldPacket() throws Exception {
+        try (var env = new com.l7defense.TestServer()) {
+            World overworld = Mockito.mock(World.class);
+            World nether = Mockito.mock(World.class);
+            when(overworld.getName()).thenReturn("world");
+            when(nether.getName()).thenReturn("world_nether");
+            when(overworld.isChunkLoaded(anyInt(), anyInt())).thenReturn(true);
+            when(nether.isChunkLoaded(anyInt(), anyInt())).thenReturn(true);
+
+            Player p = env.player(UUID.randomUUID());
+            when(p.getWorld()).thenReturn(overworld);
+
+            PacketAntiXrayManager manager = new PacketAntiXrayManager(env.plugin, env.security, true, false, false, true, 3, 4, 8, 1);
+            Location owLoc = new Location(overworld, 10, -20, 10);
+            Block owBlock = Mockito.mock(Block.class);
+            when(owBlock.getBlockData()).thenReturn(Mockito.mock(BlockData.class));
+            when(overworld.getBlockAt(10, -20, 10)).thenReturn(owBlock);
+
+            manager.injectDecoy(p, owLoc, Material.DEEPSLATE_DIAMOND_ORE, 1);
+            clearInvocations(p);
+
+            // 플레이어가 네더로 이동한 뒤 오버월드 허니팟이 만료되어 정리됨
+            when(p.getWorld()).thenReturn(nether);
+            manager.cleanExpiredDecoys(p, System.currentTimeMillis() + 5000L);
+
+            // 네더에 있는 플레이어에게 오버월드 좌표 sendBlockChange가 절대 전송되지 않아야 함
+            verify(p, never()).sendBlockChange(any(Location.class), any(BlockData.class));
+            assertEquals(0, manager.getActiveDecoyCount(p.getUniqueId()));
+            manager.close();
+        }
+    }
 }

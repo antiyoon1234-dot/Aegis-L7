@@ -66,7 +66,7 @@ public final class L7DefensePlugin extends JavaPlugin {
         validateConfiguration(config);
 
         // 기본 보안 설정
-        int maxConn = config.getInt("rate-limit.max-connections", 5);
+        int maxConn = config.getInt("rate-limit.max-connections", 20);
         int connWin = config.getInt("rate-limit.window-seconds", 30);
         int maxPing = config.getInt("ping-flood.max-pings", 15);
         int pingWin = config.getInt("ping-flood.window-seconds", 10);
@@ -76,7 +76,6 @@ public final class L7DefensePlugin extends JavaPlugin {
         int denThresh = config.getInt("attack-detection.denial-threshold", 50);
         int atkEvalSec = config.getInt("attack-detection.evaluation-interval-seconds", 30);
         int atkWin = config.getInt("attack-detection.window-seconds", 60);
-        boolean botEnabled = config.getBoolean("bot-filter.enabled", true);
         int botThresh = config.getInt("bot-filter.suspicious-threshold", 3);
         int alertInt = config.getInt("alert.interval-seconds", 5);
         boolean nameBypass = config.getBoolean("whitelist.name-bypass-all", true);
@@ -84,46 +83,48 @@ public final class L7DefensePlugin extends JavaPlugin {
         Set<String> wPlayers = java.util.Collections.unmodifiableSet(new HashSet<>(config.getStringList("whitelist.players")));
         Set<String> wIps = java.util.Collections.unmodifiableSet(IpUtils.normalizeAll(new HashSet<>(config.getStringList("whitelist.ips"))));
 
-        // v1.3 / v1.4 고급 설정
-        boolean pingJoin = config.getBoolean("advanced-heuristics.ping-before-join.enabled", true);
+        // v1.3 / v1.4 고급 설정 (누락된 키의 안전한 기본값은 false로 설정하여 오탐 킥 방지)
         boolean pingOnlyAtk = config.getBoolean("advanced-heuristics.ping-before-join.only-under-attack", true);
-        boolean rejoinEn = config.getBoolean("advanced-heuristics.rejoin-verification.enabled", true);
+        boolean rejoinEn = config.getBoolean("advanced-heuristics.rejoin-verification.enabled", false);
         int rejoinMin = config.getInt("advanced-heuristics.rejoin-verification.min-delay-seconds", 3);
         int rejoinMax = config.getInt("advanced-heuristics.rejoin-verification.max-delay-seconds", 15);
-        boolean hostEn = config.getBoolean("advanced-heuristics.hostname-validation.enabled", true);
-        boolean hostNum = config.getBoolean("advanced-heuristics.hostname-validation.block-numeric-ip", true);
+        boolean hostEn = config.getBoolean("advanced-heuristics.hostname-validation.enabled", false);
+        boolean hostNum = config.getBoolean("advanced-heuristics.hostname-validation.block-numeric-ip", false);
         List<String> hostDomains = config.getStringList("advanced-heuristics.hostname-validation.allowed-domains");
 
         // v1.4 GeoIP / Anti-VPN
-        boolean vpnEn = config.getBoolean("anti-vpn.enabled", true);
         boolean vpnOnlyAtk = config.getBoolean("anti-vpn.only-under-attack", true);
         boolean blockForeign = config.getBoolean("geoip.block-foreign-under-attack", false);
         List<String> allowedCountries = config.getStringList("geoip.allowed-countries");
 
         // v1.4 Packet Spam
-        boolean spamEn = config.getBoolean("post-login.packet-spam-filter.enabled", true);
-        int spamLimit = config.getInt("post-login.packet-spam-filter.max-actions-per-sec", 50);
+        int spamLimit = config.getInt("post-login.packet-spam-filter.max-actions-per-sec", 40);
 
         // v1.5 Endgame
-        boolean brandEn = config.getBoolean("endgame-features.brand-fingerprinting.enabled", true);
-        boolean moveEn = config.getBoolean("endgame-features.movement-heuristics.enabled", true);
         boolean redisEn = config.getBoolean("endgame-features.redis-sync.enabled", false);
         String rHost = config.getString("endgame-features.redis-sync.host", "127.0.0.1");
         int rPort = config.getInt("endgame-features.redis-sync.port", 6379);
         String rPass = config.getString("endgame-features.redis-sync.password", "");
 
-        // v1.6 모듈 매니저 및 명령어
+        // v1.6 모듈 매니저 및 명령어 (인게임 GUI / toggle 명령어로 실시간 ON/OFF 제어)
         this.moduleManager = new com.l7defense.module.ModuleConfigManager(this); com.l7defense.module.ModuleConfigManager moduleManager = this.moduleManager;
+
+        boolean botEnabled = moduleManager.isEnabled(com.l7defense.module.DefenseModule.ENTROPY);
+        boolean pingJoin = moduleManager.isEnabled(com.l7defense.module.DefenseModule.PING);
+        boolean vpnEn = moduleManager.isEnabled(com.l7defense.module.DefenseModule.VPN);
+        boolean spamEn = moduleManager.isEnabled(com.l7defense.module.DefenseModule.PACKET_SPAM);
+        boolean brandEn = moduleManager.isEnabled(com.l7defense.module.DefenseModule.BRAND);
+        boolean moveEn = moduleManager.isEnabled(com.l7defense.module.DefenseModule.MOVEMENT);
 
         boolean fwEn = config.getBoolean("firewall.enabled", false);
         String fwBlock = config.getString("firewall.command-block", "");
         String fwUnblock = config.getString("firewall.command-unblock", "");
 
-        // 매니저 초기화
+        // 매니저 초기화 (GeoIpManager는 런타임 GUI 토글로 VPN 모듈을 켤 때도 동작하도록 준비)
         if (firewallManager == null) firewallManager = new FirewallManager(this, logger, fwEn, fwBlock, fwUnblock);
         else firewallManager.updateConfiguration(fwEn, fwBlock, fwUnblock);
         geoIpManager = new com.l7defense.util.GeoIpManager(
-                logger, vpnEn || blockForeign, vpnEn, blockForeign, allowedCountries
+                logger, true, true, blockForeign, allowedCountries
         );
 
         securityManager = new SecurityManager(
@@ -159,8 +160,9 @@ public final class L7DefensePlugin extends JavaPlugin {
         logger.info("[모듈] Endgame Brand Fingerprinting: " + (brandEn ? "활성화" : "비활성화"));
         logger.info("[모듈] Endgame Movement AI Heuristics: " + (moveEn ? "활성화" : "비활성화"));
 
-        // GUI 매니저 초기화
+        // GUI 매니저 초기화 (리로드/종료 시 열려있는 GUI 자동 닫기 등록)
         com.l7defense.manager.AdminGuiManager guiManager = new com.l7defense.manager.AdminGuiManager(securityManager);
+        lifecycles.add(guiManager);
         getServer().getPluginManager().registerEvents(guiManager, this);
 
         // 명령어 등록 (중복 생성 방지 및 최신 객체 참조 유지)
@@ -171,12 +173,12 @@ public final class L7DefensePlugin extends JavaPlugin {
             cmd.setTabCompleter(handler);
         }
 
-        // 리스너 등록
+        // 리스너 등록 (bot/ping/vpn 활성 여부는 ModuleConfigManager가 런타임으로 실시간 제어)
         var pm = getServer().getPluginManager();
         pm.registerEvents(new ConnectionListener(securityManager, logger,
-                botEnabled, nameBypass, wPlayers, wIps,
-                pingJoin, pingOnlyAtk, rejoinEn, hostEn, hostNum, hostDomains,
-                vpnEn, vpnOnlyAtk), this);
+                true, nameBypass, wPlayers, wIps,
+                true, pingOnlyAtk, rejoinEn, hostEn, hostNum, hostDomains,
+                true, vpnOnlyAtk), this);
         pm.registerEvents(new PingFloodListener(securityManager, logger, wIps), this);
 
         // v1.4 & v1.5 & v1.6 & v1.7 캡챠 및 방어 리스너
@@ -300,8 +302,15 @@ public final class L7DefensePlugin extends JavaPlugin {
     private static void validateConfiguration(FileConfiguration config) {
         for (String path : new String[] {"rate-limit.max-connections", "rate-limit.window-seconds", "ping-flood.max-pings",
                 "ping-flood.window-seconds", "blocking.duration-minutes", "blocking.max-cache-size", "attack-detection.threshold",
-                "attack-detection.denial-threshold", "attack-detection.window-seconds", "bot-filter.suspicious-threshold"}) {
+                "attack-detection.denial-threshold", "attack-detection.window-seconds", "bot-filter.suspicious-threshold",
+                "post-login.packet-spam-filter.max-actions-per-sec",
+                "anti_xray.heuristics.min-total-blocks", "anti_xray.heuristics.min-rare-ores",
+                "anti_xray.packet-obfuscation.decoy-lifetime-seconds"}) {
             if (config.contains(path) && config.getInt(path) < 1) throw new IllegalArgumentException(path + " must be positive");
+        }
+        if (config.contains("anti_xray.heuristics.rare-ore-ratio")) {
+            double ratio = config.getDouble("anti_xray.heuristics.rare-ore-ratio");
+            if (ratio <= 0.0 || ratio > 1.0) throw new IllegalArgumentException("anti_xray.heuristics.rare-ore-ratio must be in (0.0, 1.0]");
         }
         int min = config.getInt("advanced-heuristics.rejoin-verification.min-delay-seconds", 3);
         int max = config.getInt("advanced-heuristics.rejoin-verification.max-delay-seconds", 15);

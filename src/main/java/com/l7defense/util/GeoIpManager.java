@@ -62,6 +62,7 @@ public final class GeoIpManager implements AutoCloseable {
      */
     public boolean isRestricted(String ip, boolean checkVpn, boolean checkForeign) {
         if (closed || !enabled || (!checkVpn && !checkForeign) || !IpUtils.isLiteral(ip)) return false;
+        if (isPrivateOrLocalIp(ip)) return false;
 
         GeoData data = geoCache.get(ip, this::fetchGeoData);
         if (data == null || data.apiFailed) return false; // API 실패 시 오탐 방지를 위해 통과
@@ -148,6 +149,20 @@ public final class GeoIpManager implements AutoCloseable {
             output.write(buffer, 0, length);
         }
         return output.toByteArray();
+    }
+
+    public static boolean isPrivateOrLocalIp(String ip) {
+        if (!IpUtils.isLiteral(ip)) return false;
+        try {
+            java.net.InetAddress addr = java.net.InetAddress.getByName(ip);
+            return addr.isAnyLocalAddress()
+                    || addr.isLoopbackAddress()
+                    || addr.isLinkLocalAddress()
+                    || addr.isSiteLocalAddress()
+                    || addr.isMulticastAddress();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public void close() { closed = true; geoCache.invalidateAll(); }

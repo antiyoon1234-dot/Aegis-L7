@@ -199,4 +199,92 @@ class BugFixRegressionTest {
             assertTrue(s3.isCancelled());
         }
     }
+
+    @Test
+    @DisplayName("GeoIpManager: 사설/로컬 IP 대역 API 요청 제외 검증")
+    void testGeoIpSkipsPrivateIps() {
+        assertTrue(com.l7defense.util.GeoIpManager.isPrivateOrLocalIp("127.0.0.1"));
+        assertTrue(com.l7defense.util.GeoIpManager.isPrivateOrLocalIp("::1"));
+        assertTrue(com.l7defense.util.GeoIpManager.isPrivateOrLocalIp("192.168.0.15"));
+        assertTrue(com.l7defense.util.GeoIpManager.isPrivateOrLocalIp("10.0.0.5"));
+        assertTrue(com.l7defense.util.GeoIpManager.isPrivateOrLocalIp("172.16.10.2"));
+        assertFalse(com.l7defense.util.GeoIpManager.isPrivateOrLocalIp("8.8.8.8"));
+        assertFalse(com.l7defense.util.GeoIpManager.isPrivateOrLocalIp("1.1.1.1"));
+    }
+
+    @Test
+    @DisplayName("CaptchaListener: 비관리자 /l7def 우회 차단 및 캡챠 중 피해 보호 검증")
+    void testCaptchaCommandBypassAndDamageProtection() throws Exception {
+        try (var env = new TestServer();
+             var gui = new com.l7defense.listener.CaptchaListener(env.plugin, env.security)) {
+            var player = env.player(java.util.UUID.randomUUID());
+            when(player.hasPermission("l7defense.admin")).thenReturn(false);
+            env.security.getCaptchas().start(player.getUniqueId(), DefenseModule.GUI_CAPTCHA);
+
+            // 일반 유저의 /l7def 명령어는 반드시 차단되어야 함
+            var cmdEvent = new org.bukkit.event.player.PlayerCommandPreprocessEvent(player, "/l7def status", java.util.Set.of());
+            gui.onPlayerCommand(cmdEvent);
+            assertTrue(cmdEvent.isCancelled());
+
+            // 관리자 권한이 있으면 /l7def 허용
+            when(player.hasPermission("l7defense.admin")).thenReturn(true);
+            var adminCmd = new org.bukkit.event.player.PlayerCommandPreprocessEvent(player, "/l7def status", java.util.Set.of());
+            gui.onPlayerCommand(adminCmd);
+            assertFalse(adminCmd.isCancelled());
+
+            // 캡챠 진행 중 피해는 취소되어 사망 방지
+            var dmgEvent = Mockito.mock(org.bukkit.event.entity.EntityDamageEvent.class);
+            when(dmgEvent.getEntity()).thenReturn(player);
+            gui.onDamageWhileCaptcha(dmgEvent);
+            Mockito.verify(dmgEvent).setCancelled(true);
+        }
+    }
+
+    @Test
+    @DisplayName("ResourcePackVerifier: NOTIFY 정책 시 forced=false 전송 및 null UUID(ViaVersion) NPE 방지 검증")
+    void testResourcePackNotifyNonForcedAndNullIdSafety() throws Exception {
+        try (var env = new TestServer();
+             var verifier = new com.l7defense.listener.ResourcePackVerifier(env.plugin, env.security, true)) {
+            when(env.modules.getPenalty(DefenseModule.RP_CAPTCHA)).thenReturn(PenaltyAction.NOTIFY);
+            var player = env.player(java.util.UUID.randomUUID());
+            env.security.getCaptchas().start(player.getUniqueId(), DefenseModule.RP_CAPTCHA);
+
+            verifier.startVerification(player);
+            Mockito.verify(player).setResourcePack(Mockito.any(java.util.UUID.class), Mockito.anyString(),
+                    Mockito.any(byte[].class), Mockito.any(net.kyori.adventure.text.Component.class), Mockito.eq(false));
+
+            // 구버전/ViaVersion 클라이언트처럼 event.getID()가 null이어도 NPE 없이 정상 통과 처리
+            var statusEvent = Mockito.mock(org.bukkit.event.player.PlayerResourcePackStatusEvent.class);
+            when(statusEvent.getPlayer()).thenReturn(player);
+            when(statusEvent.getID()).thenReturn(null);
+            when(statusEvent.getStatus()).thenReturn(org.bukkit.event.player.PlayerResourcePackStatusEvent.Status.SUCCESSFULLY_LOADED);
+            assertDoesNotThrow(() -> verifier.onResourcePackStatus(statusEvent));
+            assertFalse(env.security.needsResourcePackCaptcha(player.getUniqueId()));
+        }
+    }
+
+    @Test
+    @DisplayName("PacketSpamListener: 보조손(OFF_HAND) 및 압력판(PHYSICAL) 중복 카운트 제외 검증")
+    void testPacketSpamIgnoresOffHandAndPhysical() throws Exception {
+        try (var env = new TestServer();
+             var spam = new com.l7defense.listener.PacketSpamListener(env.security, true, 5)) {
+            when(env.modules.isEnabled(DefenseModule.PACKET_SPAM)).thenReturn(true);
+            var player = env.player(java.util.UUID.randomUUID());
+
+            var block = Mockito.mock(org.bukkit.block.Block.class);
+            for (int i = 0; i < 20; i++) {
+                var offHand = new org.bukkit.event.player.PlayerInteractEvent(player,
+                        org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK, null, block, org.bukkit.block.BlockFace.UP,
+                        org.bukkit.inventory.EquipmentSlot.OFF_HAND);
+                spam.onPlayerInteract(offHand);
+                assertFalse(offHand.isCancelled());
+
+                var physical = new org.bukkit.event.player.PlayerInteractEvent(player,
+                        org.bukkit.event.block.Action.PHYSICAL, null, block, org.bukkit.block.BlockFace.UP,
+                        org.bukkit.inventory.EquipmentSlot.HAND);
+                spam.onPlayerInteract(physical);
+                assertFalse(physical.isCancelled());
+            }
+        }
+    }
 }

@@ -91,6 +91,7 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
         item.setItemMeta(meta);
         player.getInventory().setHeldItemSlot(0);
         player.getInventory().setItem(0, item);
+        try { player.sendMap(map); } catch (Throwable ignored) {}
         player.sendMessage(Component.text("[L7] 캡챠: 손에 든 지도를 보고 코드를 채팅에 입력하세요. (30초)", NamedTextColor.RED));
         tasks.later(player, "timeout", 600L, () -> {
             if (activeCaptchas.get(id) != challenge) return;

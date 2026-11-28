@@ -65,8 +65,11 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
                 String hash = plugin.getConfig().getString("captcha.resource-pack-sha1", "");
                 byte[] digest = hash.isBlank() ? (DUMMY_URL.equals(url) ? DUMMY_HASH : null) : java.util.HexFormat.of().parseHex(hash);
                 if (digest != null && digest.length != 20) throw new IllegalArgumentException("SHA-1 must contain 40 hexadecimal characters");
+                // NOTIFY(주의) 정책일 때는 클라이언트가 거절 시 강제 퇴장되지 않도록 forced=false로 전송
+                boolean forced = securityManager.getModuleManager() == null
+                        || securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.RP_CAPTCHA) != com.l7defense.module.PenaltyAction.NOTIFY;
                 player.setResourcePack(requestId, url, digest,
-                        Component.text("봇 방지를 위해 리소스팩을 수락해야 합니다.", NamedTextColor.YELLOW), true);
+                        Component.text("봇 방지를 위해 리소스팩을 수락해야 합니다.", NamedTextColor.YELLOW), forced);
             } catch (RuntimeException ex) {
                 pendingVerifications.remove(player.getUniqueId());
                 plugin.getLogger().warning("[L7] 리소스팩 전송 실패: " + ex.getMessage());
@@ -84,7 +87,6 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
             // 느린 다운로드를 고려해 현재 구현은 60초까지 기다립니다.
             tasks.later(player, "timeout", 20L * 60L, () -> {
                 if (pendingVerifications.remove(player.getUniqueId(), requestId)) {
-                    pendingVerifications.remove(player.getUniqueId());
                     if (player.isOnline()) {
                         plugin.getLogger().warning("[L7] 리소스팩 캡챠 타임아웃: " + player.getName());
                         securityManager.handleViolation(player, com.l7defense.module.DefenseModule.RP_CAPTCHA, "리소스팩 캡챠 타임아웃");
@@ -107,8 +109,12 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
 
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
+        UUID expectedId = pendingVerifications.get(uuid);
+        if (expectedId == null) return;
 
-        if (event.getID().equals(pendingVerifications.get(uuid))) {
+        // 1.20.1/ViaVersion 클라이언트는 event.getID()가 null일 수 있으므로 NPE 방지
+        UUID eventId = event.getID();
+        if (eventId == null || eventId.equals(expectedId)) {
 
             switch (event.getStatus()) {
                 case SUCCESSFULLY_LOADED:

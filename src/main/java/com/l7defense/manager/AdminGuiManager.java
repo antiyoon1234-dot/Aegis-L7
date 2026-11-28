@@ -16,7 +16,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import java.util.ArrayList;
 import java.util.List;
 
-public class AdminGuiManager implements Listener {
+public class AdminGuiManager implements Listener, AutoCloseable {
 
     private static final class AdminGuiHolder implements org.bukkit.inventory.InventoryHolder {
         private Inventory inventory;
@@ -70,7 +70,7 @@ public class AdminGuiManager implements Listener {
         boolean isEnabled = configManager.isEnabled(module);
         PenaltyAction penalty = configManager.getPenalty(module);
 
-        meta.setDisplayName((isEnabled ? "§a§l[ON] §f" : "§c§l[OFF] §7") + module.getId().toUpperCase());
+        meta.setDisplayName((isEnabled ? "§a§l[ON] §f" : "§c§l[OFF] §7") + module.getId().toUpperCase(java.util.Locale.ROOT));
 
         List<String> lore = new ArrayList<>();
         lore.add("§7" + module.getDescription());
@@ -163,5 +163,23 @@ public class AdminGuiManager implements Listener {
             case NOTIFY: return PenaltyAction.BAN;
             default: return PenaltyAction.BAN;
         }
+    }
+
+    /**
+     * 플러그인 리로드/비활성화 시 열려있는 관리자 GUI를 강제로 닫아
+     * 리스너 해제 후 GUI 아이템을 꺼내가는 익스플로잇을 차단합니다.
+     */
+    @Override
+    public void close() {
+        if (Bukkit.getServer() == null) return;
+        try {
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                var open = player.getOpenInventory();
+                if (open != null && open.getTopInventory() != null
+                        && open.getTopInventory().getHolder() instanceof AdminGuiHolder) {
+                    player.closeInventory();
+                }
+            }
+        } catch (Throwable ignored) {}
     }
 }

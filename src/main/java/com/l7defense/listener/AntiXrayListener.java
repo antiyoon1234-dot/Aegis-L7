@@ -122,7 +122,12 @@ public class AntiXrayListener implements Listener, AutoCloseable {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
         Player player = event.getPlayer();
+        Block block = event.getBlock();
         if (player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR) {
+            if (packetAntiXrayManager != null && packetAntiXrayManager.isDecoy(player, block.getLocation())) {
+                packetAntiXrayManager.removeDecoy(player, block.getLocation());
+                player.sendMessage("§e[L7-AntiXray] 크리에이티브 모드에서는 허니팟 적발이 생략됩니다. 서바이벌 모드에서 테스트해주세요.");
+            }
             return;
         }
 
@@ -130,13 +135,11 @@ public class AntiXrayListener implements Listener, AutoCloseable {
             return;
         }
 
-        Block block = event.getBlock();
-
         // 1. 패킷 허니팟(Decoy Trap) 검사: 가짜 다이아몬드 패킷을 투시하여 굴착한 경우 즉각 차단 및 경고
         if (packetAntiXrayManager != null && packetAntiXrayManager.isDecoy(player, block.getLocation())) {
             event.setCancelled(true);
             packetAntiXrayManager.removeDecoy(player, block.getLocation());
-            String reason = String.format("X-Ray ESP 패킷 트랩 적발 [밀폐된 가짜 다이아몬드 패킷 투시 굴착, 위치: %s %d, %d, %d]",
+            String reason = String.format(Locale.ROOT, "X-Ray ESP 패킷 트랩 적발 [밀폐된 가짜 다이아몬드 패킷 투시 굴착, 위치: %s %d, %d, %d]",
                     block.getWorld().getName(), block.getX(), block.getY(), block.getZ());
             securityManager.handleViolation(player, DefenseModule.ANTI_XRAY, reason);
             return;
@@ -213,7 +216,7 @@ public class AntiXrayListener implements Listener, AutoCloseable {
         }
 
         if (isViolation) {
-            String reason = String.format("비정상 광석 채굴 비율 감지 [다이아/잔해: %d개, 총 채굴: %d개, 비율: %.1f%%, 위치: %s %d, %d, %d]",
+            String reason = String.format(Locale.ROOT, "비정상 광석 채굴 비율 감지 [다이아/잔해: %d개, 총 채굴: %d개, 비율: %.1f%%, 위치: %s %d, %d, %d]",
                     rareCount, totalCount, (ratio * 100.0),
                     worldName, x, y, z);
             securityManager.handleViolation(player, DefenseModule.ANTI_XRAY, reason);

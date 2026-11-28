@@ -169,9 +169,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
 
             // 마스킹 복구
             if (playerMasked != null && playerMasked.remove(nLoc)) {
-                if (Bukkit.getServer() != null) {
-                    try { player.sendBlockChange(nLoc, neighbor.getBlockData()); } catch (Throwable ignored) {}
-                }
+                sendSafeBlockChange(player, nLoc, neighbor.getBlockData());
             }
 
             // 허니팟이 공기에 노출된 경우 유예 만료 시간(15초) 적용
@@ -189,6 +187,30 @@ public class PacketAntiXrayManager implements AutoCloseable {
     private static Location normalizeBlockLocation(Location loc) {
         if (loc == null || loc.getWorld() == null) return loc;
         return new Location(loc.getWorld(), loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
+    }
+
+    /**
+     * 동일 월드 및 로드된 청크인 경우에만 블록 변경 패킷을 안전하게 전송합니다.
+     * 다른 차원(예: 오버월드 -> 네더 이동 후)에 타 차원 좌표의 고스트 블록이 생성되는 프로토콜 버그를 원천 차단합니다.
+     */
+    private static void sendSafeBlockChange(Player player, Location loc, BlockData data) {
+        if (Bukkit.getServer() == null || player == null || !player.isOnline() || loc == null || data == null) return;
+        World world = loc.getWorld();
+        if (world == null || !world.equals(player.getWorld())) return;
+        if (!world.isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) return;
+        try {
+            player.sendBlockChange(loc, data);
+        } catch (Throwable ignored) {}
+    }
+
+    private static void sendSafeRealBlockChange(Player player, Location loc) {
+        if (Bukkit.getServer() == null || player == null || !player.isOnline() || loc == null) return;
+        World world = loc.getWorld();
+        if (world == null || !world.equals(player.getWorld())) return;
+        if (!world.isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) return;
+        try {
+            player.sendBlockChange(loc, loc.getBlock().getBlockData());
+        } catch (Throwable ignored) {}
     }
 
     /**
@@ -236,7 +258,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
                             if (Bukkit.getServer() != null) {
                                 try {
                                     BlockData fakeData = getMaskBlockData(world, y);
-                                    player.sendBlockChange(loc, fakeData);
+                                    sendSafeBlockChange(player, loc, fakeData);
                                 } catch (Throwable ignored) {}
                             }
                             playerMasked.add(loc);
@@ -286,11 +308,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
         if (entry == null) return false;
         if (entry.isExpired(System.currentTimeMillis())) {
             decoys.remove(key);
-            if (Bukkit.getServer() != null) {
-                try {
-                    player.sendBlockChange(key, key.getBlock().getBlockData());
-                } catch (Throwable ignored) {}
-            }
+            sendSafeRealBlockChange(player, key);
             return false;
         }
         return true;
@@ -306,18 +324,10 @@ public class PacketAntiXrayManager implements AutoCloseable {
         Map<Location, DecoyEntry> decoys = activeDecoys.get(player.getUniqueId());
         if (decoys != null) {
             decoys.remove(key);
-            if (Bukkit.getServer() != null && key.getWorld() != null) {
+            sendSafeRealBlockChange(player, key);
+            if (Bukkit.getServer() != null && plugin != null && plugin.isEnabled()) {
                 try {
-                    Block block = key.getBlock();
-                    BlockData realData = block.getBlockData();
-                    player.sendBlockChange(key, realData);
-                    if (plugin != null && plugin.isEnabled()) {
-                        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-                            if (player.isOnline() && key.getWorld().equals(player.getWorld())) {
-                                try { player.sendBlockChange(key, key.getBlock().getBlockData()); } catch (Throwable ignored) {}
-                            }
-                        }, 1L);
-                    }
+                    Bukkit.getScheduler().runTaskLater(plugin, () -> sendSafeRealBlockChange(player, key), 1L);
                 } catch (Throwable ignored) {}
             }
         }
@@ -342,7 +352,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
         decoys.put(key, new DecoyEntry(fakeOre, now, expiresAt));
         if (Bukkit.getServer() != null) {
             try {
-                player.sendBlockChange(key, fakeOre.createBlockData());
+                sendSafeBlockChange(player, key, fakeOre.createBlockData());
             } catch (Throwable ignored) {}
         }
     }
@@ -364,13 +374,14 @@ public class PacketAntiXrayManager implements AutoCloseable {
 
         Map<Location, DecoyEntry> decoys = activeDecoys.computeIfAbsent(player.getUniqueId(), k -> new ConcurrentHashMap<>());
 
-        // 만료된 허니팟 및 유저와 20블록 이상 멀어진 기존 허니팟 정리 (자동 삭제 및 원상복구)
+        // 만료된 허니팟 및 유저와 20블록 이상 멀어진 기존 허니팟 정리 (다른 월드면 패킷 전송 생략하여 고스트 블록 방지)
         long now = System.currentTimeMillis();
         decoys.entrySet().removeIf(entry -> {
             Location loc = entry.getKey();
-            if (loc.getWorld() != world || loc.distanceSquared(center) > 400 || entry.getValue().isExpired(now)) {
-                if (Bukkit.getServer() != null) {
-                    try { player.sendBlockChange(loc, loc.getBlock().getBlockData()); } catch (Throwable ignored) {}
+            boolean differentWorld = loc.getWorld() == null || !loc.getWorld().equals(world);
+            if (differentWorld || loc.distanceSquared(center) > 400 || entry.getValue().isExpired(now)) {
+                if (!differentWorld) {
+                    sendSafeRealBlockChange(player, loc);
                 }
                 return true;
             }
@@ -409,13 +420,13 @@ public class PacketAntiXrayManager implements AutoCloseable {
             double dist = rng.nextDouble(decoyMinDistance, decoyMaxDistance + 0.99);
             int dx = (int) Math.round(Math.cos(angle) * dist);
             int dz = (int) Math.round(Math.sin(angle) * dist);
-            // 직진 일자 갱도(dy == 0, 1)와 겹치지 않도록 위/아래 오프셋 우선 배치
-            int dy = rng.nextBoolean() ? rng.nextInt(2, 5) : rng.nextInt(-4, -1);
+            // 상하(±2~4) 또는 수평 측면(0~1) 배치
+            int dy = rng.nextInt(-3, 4);
 
-            // 정면 직선 채굴 방향(±25도)이면서 같은 높이인 위치는 정상 채광자 오탐 방지를 위해 회피
-            if (hasLook && Math.abs(dy) <= 1) {
+            // 정면 직선 채굴 방향(±45도)이면서 같은 높이(dy 0~1)인 위치는 정상 일자 채광자 오탐 방지를 위해 회피
+            if (hasLook && dy >= -1 && dy <= 2) {
                 double len = Math.hypot(dx, dz);
-                if (len > 0 && ((dx * lookX + dz * lookZ) / len) > 0.9) continue;
+                if (len > 0 && ((dx * lookX + dz * lookZ) / len) > 0.7) continue;
             }
 
             int targetX = cx + dx;
@@ -473,12 +484,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
             Map.Entry<Location, DecoyEntry> entry = it.next();
             if (entry.getValue().isExpired(now)) {
                 it.remove();
-                Location loc = entry.getKey();
-                if (loc.getWorld() != null && Bukkit.getServer() != null) {
-                    try {
-                        player.sendBlockChange(loc, loc.getBlock().getBlockData());
-                    } catch (Throwable ignored) {}
-                }
+                sendSafeRealBlockChange(player, entry.getKey());
             }
         }
     }
@@ -491,11 +497,9 @@ public class PacketAntiXrayManager implements AutoCloseable {
 
     public void clearDecoys(Player player) {
         Map<Location, DecoyEntry> decoys = activeDecoys.remove(player.getUniqueId());
-        if (decoys != null && Bukkit.getServer() != null) {
+        if (decoys != null) {
             for (Location loc : decoys.keySet()) {
-                if (loc.getWorld() != null) {
-                    try { player.sendBlockChange(loc, loc.getBlock().getBlockData()); } catch (Throwable ignored) {}
-                }
+                sendSafeRealBlockChange(player, loc);
             }
         }
     }
@@ -546,17 +550,13 @@ public class PacketAntiXrayManager implements AutoCloseable {
                     Set<Location> masked = maskedBlocks.remove(player.getUniqueId());
                     if (masked != null) {
                         for (Location loc : masked) {
-                            if (loc.getWorld() != null) {
-                                player.sendBlockChange(loc, loc.getBlock().getBlockData());
-                            }
+                            sendSafeRealBlockChange(player, loc);
                         }
                     }
                     Map<Location, DecoyEntry> decoys = activeDecoys.remove(player.getUniqueId());
                     if (decoys != null) {
                         for (Location loc : decoys.keySet()) {
-                            if (loc.getWorld() != null) {
-                                player.sendBlockChange(loc, loc.getBlock().getBlockData());
-                            }
+                            sendSafeRealBlockChange(player, loc);
                         }
                     }
                 }

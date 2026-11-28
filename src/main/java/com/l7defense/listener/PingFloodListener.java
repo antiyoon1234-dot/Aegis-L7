@@ -39,15 +39,10 @@ public final class PingFloodListener implements Listener {
      * 화이트리스트에 등록된 IP는 검사를 건너뜁니다.
      * 차단된 IP의 핑 요청은 이벤트를 취소하여 응답 자체를 보내지 않습니다.
      */
-    // 메모리 고갈 방지를 위해 클래스 로드 시 딱 1번만 생성하여 캐싱 (수천 번 호출되어도 메모리 0 낭비)
-    private static final String CRASH_PAYLOAD;
-    static {
-        StringBuilder sb = new StringBuilder("§k");
-        for (int i = 0; i < 2000; i++) {
-            sb.append(Math.random() > 0.5 ? "§x§0§0§0§0§0§0" : "§r§k§l§m§n§o");
-        }
-        CRASH_PAYLOAD = sb.toString();
-    }
+    // Paper Status JSON 패킷 한도(32KB) 초과/서버 자체 직렬화 부하를 방지하기 위해 경량 난독화 MOTD 사용
+    private static final net.kyori.adventure.text.Component DEFENSIVE_MOTD =
+            net.kyori.adventure.text.Component.text("L7 Defense Active", net.kyori.adventure.text.format.NamedTextColor.DARK_GRAY)
+                    .decorate(net.kyori.adventure.text.format.TextDecoration.OBFUSCATED);
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onServerListPing(PaperServerListPingEvent event) {
@@ -73,17 +68,18 @@ public final class PingFloodListener implements Listener {
         }
 
         if (securityManager.recordAndCheckPing(ip)) {
-            if (securityManager.getModuleManager() != null && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.SLP_CRASHER)) {
-                // 공격형 방어: 연속적인 비정상 핑 요청이 올 경우 
-                // 봇넷 스크립트 파서(Parser)의 OOM(메모리 누수) 또는 정규식 크래시를 유발하는 기형적인 데이터 전송
-                event.setMaxPlayers(Integer.MAX_VALUE);
-                event.setMotd(CRASH_PAYLOAD);
+            securityManager.evaluateAttackStatus();
+            var moduleMgr = securityManager.getModuleManager();
+            if (moduleMgr != null
+                    && moduleMgr.isEnabled(com.l7defense.module.DefenseModule.SLP_CRASHER)
+                    && moduleMgr.getPenalty(com.l7defense.module.DefenseModule.SLP_CRASHER) != com.l7defense.module.PenaltyAction.NOTIFY) {
+                event.setMaxPlayers(0);
+                event.motd(DEFENSIVE_MOTD);
                 return;
             }
 
             event.setCancelled(true);
             logger.fine("[L7] 핑 플러드 감지 및 응답 차단: " + ip);
-            securityManager.evaluateAttackStatus();
         }
     }
 }

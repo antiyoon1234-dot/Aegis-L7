@@ -72,6 +72,9 @@ public final class PacketSpamListener implements Listener, AutoCloseable {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPlayerInteract(PlayerInteractEvent event) {
+        // 압력판/농지 밟기(PHYSICAL) 및 보조손(OFF_HAND) 중복 이벤트로 인한 2배 오탐 방지
+        if (event.getAction() == org.bukkit.event.block.Action.PHYSICAL) return;
+        if (event.getHand() == org.bukkit.inventory.EquipmentSlot.OFF_HAND) return;
         if (checkSpam(event.getPlayer())) {
             event.setCancelled(true);
         }

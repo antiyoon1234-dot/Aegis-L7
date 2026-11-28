@@ -64,12 +64,17 @@ public final class CaptchaListener implements Listener, AutoCloseable {
                 if (securityManager.needsGuiCaptcha(player.getUniqueId())) {
                     securityManager.offerCaptchaRetry(player);
                     views.remove(player.getUniqueId());
-                    if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.GUI_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
-                        securityManager.handleViolation(player, com.l7defense.module.DefenseModule.GUI_CAPTCHA, "캡챠 인증 시간 초과");
+                    var penalty = securityManager.getModuleManager() != null
+                            ? securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.GUI_CAPTCHA)
+                            : com.l7defense.module.PenaltyAction.KICK;
+                    securityManager.handleViolation(player, com.l7defense.module.DefenseModule.GUI_CAPTCHA, "캡챠 인증 시간 초과");
+                    if (penalty == com.l7defense.module.PenaltyAction.NOTIFY) {
                         securityManager.passGuiCaptcha(player);
                         tasks.later(player, "close", 1L, player::closeInventory);
                     } else {
-                        player.kick(Component.text("캡챠 인증 시간 초과. 다시 접속해주세요.", NamedTextColor.RED));
+                        if (player.isOnline()) {
+                            player.kick(Component.text("캡챠 인증 시간 초과. 다시 접속해주세요.", NamedTextColor.RED));
+                        }
                         if (player.isOnline()) {
                             tasks.later(player, "retry", 20L, () -> {
                                 if (player.isOnline()) openCaptcha(player);
@@ -121,12 +126,18 @@ public final class CaptchaListener implements Listener, AutoCloseable {
                 } else if (clicked != null && clicked.getType() == Material.RED_STAINED_GLASS_PANE) {
                     views.remove(player.getUniqueId());
                     tasks.cancel(player.getUniqueId());
+                    var penalty = securityManager.getModuleManager() != null
+                            ? securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.GUI_CAPTCHA)
+                            : com.l7defense.module.PenaltyAction.KICK;
                     securityManager.handleViolation(player, com.l7defense.module.DefenseModule.GUI_CAPTCHA, "잘못된 아이템 클릭");
-                    if (securityManager.getModuleManager() != null && securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.GUI_CAPTCHA) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                    if (penalty == com.l7defense.module.PenaltyAction.NOTIFY) {
                         securityManager.passGuiCaptcha(player);
                         tasks.later(player, "close", 1L, player::closeInventory);
-                    } else {
-                        player.kick(Component.text("잘못된 아이템을 클릭했습니다. 다시 시도하세요.", NamedTextColor.RED));
+                    } else if (player.isOnline()) {
+                        // handleViolation이 이미 퇴장 처리하지 않은 경우(모듈 매니저 null 등)에만 폴백 킥
+                        if (securityManager.getModuleManager() == null) {
+                            player.kick(Component.text("잘못된 아이템을 클릭했습니다. 다시 시도하세요.", NamedTextColor.RED));
+                        }
                     }
                 }
             }
@@ -178,15 +189,44 @@ public final class CaptchaListener implements Listener, AutoCloseable {
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
-        public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
-
-        if (isAnyCaptchaPending(event.getPlayer().getUniqueId())) {
-            // 관리자 명령어 예외 처리
-            if (event.getMessage().toLowerCase().startsWith("/l7def")) {
-                return; // 허용
+    public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
+        Player player = event.getPlayer();
+        if (isAnyCaptchaPending(player.getUniqueId())) {
+            // 권한이 있는 관리자의 /l7def 명령어만 예외 허용
+            String lower = event.getMessage().toLowerCase(java.util.Locale.ROOT).trim();
+            if (player.hasPermission("l7defense.admin") && (lower.equals("/l7def") || lower.startsWith("/l7def "))) {
+                return;
             }
             event.setCancelled(true);
-            event.getPlayer().sendMessage(Component.text("캡챠 인증을 먼저 완료해주세요.", NamedTextColor.RED));
+            player.sendMessage(Component.text("캡챠 인증을 먼저 완료해주세요.", NamedTextColor.RED));
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onDamageWhileCaptcha(org.bukkit.event.entity.EntityDamageEvent event) {
+        if (event.getEntity() instanceof Player player && isAnyCaptchaPending(player.getUniqueId())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onBlockBreakWhileCaptcha(org.bukkit.event.block.BlockBreakEvent event) {
+        if (isAnyCaptchaPending(event.getPlayer().getUniqueId())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onBlockPlaceWhileCaptcha(org.bukkit.event.block.BlockPlaceEvent event) {
+        if (isAnyCaptchaPending(event.getPlayer().getUniqueId())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onDropWhileCaptcha(PlayerDropItemEvent event) {
+        if (isAnyCaptchaPending(event.getPlayer().getUniqueId())) {
+            event.setCancelled(true);
         }
     }
     @EventHandler

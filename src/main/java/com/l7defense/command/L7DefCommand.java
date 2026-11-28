@@ -109,15 +109,28 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
                 org.bukkit.Location eye = player.getEyeLocation();
                 org.bukkit.util.Vector dir = eye.getDirection().normalize();
                 org.bukkit.Location target = eye.clone().add(dir.multiply(dist));
+                org.bukkit.World world = player.getWorld();
+                if (target.getBlockY() < world.getMinHeight() || target.getBlockY() >= world.getMaxHeight()) {
+                    player.sendMessage("§c[L7-AntiXray] 대상 위치가 월드 높이 범위를 벗어났습니다.");
+                    return true;
+                }
                 org.bukkit.block.Block b = target.getBlock();
-                org.bukkit.Material fakeMat = player.getWorld().getEnvironment() == org.bukkit.World.Environment.NETHER
+                org.bukkit.Material realType = b.getType();
+                if (realType.isAir() || b.isLiquid() || realType == org.bukkit.Material.BEDROCK || b.getState() instanceof org.bukkit.block.TileState) {
+                    player.sendMessage("§c[L7-AntiXray] 공기·액체·기반암·상자/블록 엔티티에는 허니팟을 주입할 수 없습니다. 지하 돌/심층암 벽을 바라보고 실행해주세요.");
+                    return true;
+                }
+                org.bukkit.Material fakeMat = world.getEnvironment() == org.bukkit.World.Environment.NETHER
                         ? org.bukkit.Material.ANCIENT_DEBRIS
                         : (target.getBlockY() < 0 ? org.bukkit.Material.DEEPSLATE_DIAMOND_ORE : org.bukkit.Material.DIAMOND_ORE);
                 pxManager.injectDecoy(player, b.getLocation(), fakeMat, lifetime);
+                if (securityManager.getModuleManager() != null && !securityManager.getModuleManager().isEnabled(DefenseModule.ANTI_XRAY)) {
+                    player.sendMessage("§c[주의] 현재 anti_xray 모듈이 OFF 상태입니다. '/l7def toggle anti_xray'로 켜야 적발 경고가 발동합니다.");
+                }
                 player.sendMessage("§a[L7-AntiXray] 시선 방향 " + dist + "블록 앞 벽 속에 가짜 광석 허니팟을 주입했습니다! (유효시간: §e" + lifetime + "초§a)");
-                player.sendMessage("§7위치: §e" + b.getWorld().getName() + " " + b.getX() + ", " + b.getY() + ", " + b.getZ() + " §7(가짜 광석: §b" + fakeMat.name() + "§7)");
+                player.sendMessage("§7위치: §e" + world.getName() + " " + b.getX() + ", " + b.getY() + ", " + b.getZ() + " §7(가짜 광석: §b" + fakeMat.name() + "§7)");
                 player.sendMessage("§7유효 시간이 지나면 자동으로 원래 암석으로 복구/삭제됩니다.");
-                player.sendMessage("§e[테스트 가이드] §f엑스레이(ESP/텍스처팩)를 켜면 해당 벽 속 다이아몬드가 보입니다. 벽을 파고 들어가 채굴하면 즉시 적발 경고가 발동합니다!");
+                player.sendMessage("§e[테스트 가이드] §f서바이벌 모드에서 엑스레이(ESP/텍스처팩)를 켜고 벽을 파고 들어가 채굴하면 즉시 적발 경고가 발동합니다!");
                 return true;
             }
             if (args.length >= 2 && args[1].equalsIgnoreCase("clear")) {
@@ -193,7 +206,11 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        if (args[0].equalsIgnoreCase("test") && args.length == 2) {
+        if (args[0].equalsIgnoreCase("test")) {
+            if (args.length < 2) {
+                sender.sendMessage("§c사용법: /l7def test <모듈>");
+                return true;
+            }
             if (!(sender instanceof org.bukkit.entity.Player player)) {
                 sender.sendMessage("인게임에서만 테스트 가능합니다.");
                 return true;
@@ -265,6 +282,8 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             completions.add("KICK");
             completions.add("NOTIFY");
         }
+        String prefix = args.length > 0 ? args[args.length - 1].toLowerCase(java.util.Locale.ROOT) : "";
+        completions.removeIf(s -> !s.toLowerCase(java.util.Locale.ROOT).startsWith(prefix));
         return completions;
     }
 }
