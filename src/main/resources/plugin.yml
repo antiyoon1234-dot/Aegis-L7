@@ -15,7 +15,7 @@ libraries:
 commands:
   l7def:
     description: L7 Defense 관리 명령어
-    usage: /l7def <alert|status|unblock|reload>
+    usage: /l7def <gui|status|alert|modules|toggle|penalty|xray|unban|test|reload>
     permission: l7defense.admin
 
 permissions:

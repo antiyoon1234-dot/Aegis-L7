@@ -118,4 +118,28 @@ class CaptchaRegressionTest {
             assertTrue(env.security.recordAndCheckConnection("192.0.2.1", id));
         }
     }
+
+    @Test void mapCaptchaDeathWithoutKeepInventoryDoesNotDuplicateSavedItem() throws Exception {
+        try (var env = new TestServer(); var maps = new MapCaptchaListener(env.plugin, env.security)) {
+            var player = env.player(UUID.randomUUID());
+            var sword = new ItemStack(Material.DIAMOND_SWORD, 1);
+            player.getInventory().setItem(0, sword);
+            env.security.getCaptchas().start(player.getUniqueId(), DefenseModule.MAP_CAPTCHA);
+            maps.triggerMapCaptcha(player);
+
+            var drops = new ArrayList<ItemStack>();
+            drops.add(player.getInventory().getItem(0)); // captcha map item
+            var deathEvent = mock(org.bukkit.event.entity.PlayerDeathEvent.class);
+            when(deathEvent.getEntity()).thenReturn(player);
+            when(deathEvent.getDrops()).thenReturn(drops);
+            when(deathEvent.getKeepInventory()).thenReturn(false);
+
+            maps.onDeath(deathEvent);
+
+            // 드롭에 원래 아이템이 정확히 1개만 들어가고, 인벤토리 슬롯 0에는 중복 복구되지 않아야 함
+            assertEquals(1, drops.size());
+            assertEquals(Material.DIAMOND_SWORD, drops.get(0).getType());
+            assertNull(player.getInventory().getItem(0));
+        }
+    }
 }

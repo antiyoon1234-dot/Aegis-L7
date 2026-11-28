@@ -237,4 +237,30 @@ class PacketAntiXrayTest {
         // 만료 후 허니팟 자동 삭제 검증
         assertEquals(0, packetManager.getActiveDecoyCount(playerUuid));
     }
+
+    @Test
+    @DisplayName("PacketAntiXrayManager: 소수점/시선각이 포함된 Location 키 정규화 검증")
+    void testDecoyLocationNormalization() {
+        PacketAntiXrayManager packetManager = new PacketAntiXrayManager(plugin, securityManager, true, false, true, true);
+        Location fractional = new Location(world, 12.7, -15.3, 8.9, 45.0f, -30.0f);
+        Location exact = new Location(world, 12, -16, 8);
+
+        packetManager.injectDecoy(player, fractional, Material.DEEPSLATE_DIAMOND_ORE);
+        assertTrue(packetManager.isDecoy(player, exact));
+        packetManager.removeDecoy(player, exact);
+        assertFalse(packetManager.isDecoy(player, fractional));
+    }
+
+    @Test
+    @DisplayName("PaperAntiXrayConfigurator: 이미 Engine-Mode 2가 켜진 경우 불필요한 덮어쓰기 방지 검증")
+    void testPaperEngineMode2Idempotent(@TempDir File tempDir) {
+        assertTrue(PaperAntiXrayConfigurator.applyEngineMode2(tempDir, Logger.getLogger("test")));
+        File configFile = new File(tempDir, "config/paper-world-defaults.yml");
+        assertTrue(configFile.setLastModified(1_000_000L));
+        long mtimeBefore = configFile.lastModified();
+
+        // 재호출 시 이미 활성화되어 있으므로 파일을 다시 쓰지 않아야 함
+        assertTrue(PaperAntiXrayConfigurator.applyEngineMode2(tempDir, Logger.getLogger("test")));
+        assertEquals(mtimeBefore, configFile.lastModified());
+    }
 }

@@ -103,4 +103,100 @@ class BugFixRegressionTest {
         java.util.List<String> parts = com.l7defense.util.FirewallManager.splitCommand("iptables -I INPUT -s 1.2.3.4 -j DROP");
         assertEquals(java.util.List.of("iptables", "-I", "INPUT", "-s", "1.2.3.4", "-j", "DROP"), parts);
     }
+
+    @Test
+    @DisplayName("NameEntropyChecker: 일반 영문 CamelCase 닉네임 오탐 방지 검증")
+    void testNormalCamelCaseNamesNotFlagged() {
+        assertFalse(NameEntropyChecker.isRandomBotName("MinecraftPro"));
+        assertFalse(NameEntropyChecker.isRandomBotName("PlayerKnight"));
+        assertFalse(NameEntropyChecker.isRandomBotName("SilverShadow"));
+        assertFalse(NameEntropyChecker.isRandomBotName("KoreanGamer"));
+    }
+
+    @Test
+    @DisplayName("ModuleConfigManager: 기존 키가 모두 존재할 때 불필요한 saveConfig() 미호출 검증")
+    void testModuleConfigManagerSkipsSaveWhenClean() {
+        Plugin plugin = Mockito.mock(Plugin.class);
+        YamlConfiguration config = new YamlConfiguration();
+        for (DefenseModule mod : DefenseModule.values()) {
+            config.set("dynamic-modules." + mod.getId() + ".enabled", true);
+            config.set("dynamic-modules." + mod.getId() + ".penalty", "NOTIFY");
+        }
+        when(plugin.getConfig()).thenReturn(config);
+
+        new ModuleConfigManager(plugin);
+        Mockito.verify(plugin, Mockito.never()).saveConfig();
+    }
+
+    @Test
+    @DisplayName("MovementHeuristics: 바닐라 상/하단 클램핑(±90°) 시점 회전 오탐 방지 검증")
+    void testMovementHeuristicsAllowsClampedPitch() throws Exception {
+        try (var env = new TestServer();
+             var listener = new com.l7defense.listener.MovementHeuristicsListener(env.security, true)) {
+            when(env.modules.isEnabled(DefenseModule.MOVEMENT)).thenReturn(true);
+            var player = env.player(java.util.UUID.randomUUID());
+            var world = Mockito.mock(org.bukkit.World.class);
+
+            // 바닥(90.0f) 및 하늘(-90.0f)을 보며 수평 회전해도 봇으로 오탐하지 않아야 함
+            for (int i = 0; i < 15; i++) {
+                float pitch = (i % 2 == 0) ? 90.0f : -90.0f;
+                var from = new org.bukkit.Location(world, i, 64, 0, i * 20f, pitch);
+                var to = new org.bukkit.Location(world, i + 0.2, 64, 0, (i + 1) * 20f, pitch);
+                listener.onPlayerMove(new org.bukkit.event.player.PlayerMoveEvent(player, from, to));
+            }
+            assertNull(env.security.getCaptchas().get(player.getUniqueId()));
+        }
+    }
+
+    @Test
+    @DisplayName("ExploitCrasher: 정상 명령어 연속 자동완성 허용 및 대용량 탭 페이로드 차단 검증")
+    void testExploitCrasherTabCompleteBalance() throws Exception {
+        try (var env = new TestServer();
+             var listener = new com.l7defense.listener.ExploitCrasherListener(env.security)) {
+            when(env.modules.isEnabled(DefenseModule.EXPLOIT_CRASHER)).thenReturn(true);
+            var player = env.player(java.util.UUID.randomUUID());
+
+            // 15회 정상 타이핑 자동완성은 취소되지 않아야 함
+            for (int i = 0; i < 15; i++) {
+                var event = new org.bukkit.event.server.TabCompleteEvent(player, "/tp Player", java.util.List.of());
+                listener.onTabComplete(event);
+                assertFalse(event.isCancelled(), "정상 타이핑 자동완성이 차단되어서는 안 됨");
+            }
+
+            // 256자 초과 대용량 탭 버퍼는 즉시 차단
+            var exploitEvent = new org.bukkit.event.server.TabCompleteEvent(player, "/" + "a".repeat(300), java.util.List.of());
+            listener.onTabComplete(exploitEvent);
+            assertTrue(exploitEvent.isCancelled());
+        }
+    }
+
+    @Test
+    @DisplayName("ChatAi: 정상 인사말 다중 입력 허용 및 실제 반복 스팸 차단 검증")
+    void testChatAiAllowsGreetingsAndBlocksSpam() throws Exception {
+        try (var env = new TestServer();
+             var listener = new com.l7defense.listener.ChatAiListener(env.security)) {
+            when(env.modules.isEnabled(DefenseModule.CHAT_AI)).thenReturn(true);
+            var p1 = env.player(java.util.UUID.randomUUID());
+            var p2 = env.player(java.util.UUID.randomUUID());
+            var p3 = env.player(java.util.UUID.randomUUID());
+
+            // 3명이 "안녕하세요"를 연달아 입력해도 차단되지 않아야 함
+            for (var p : java.util.List.of(p1, p2, p3)) {
+                var e = new org.bukkit.event.player.AsyncPlayerChatEvent(true, p, "안녕하세요", java.util.Set.of());
+                listener.onPlayerChat(e);
+                assertFalse(e.isCancelled(), "짧은 일반 인사말이 차단되어서는 안 됨");
+            }
+
+            // 동일 플레이어가 8자 이상 긴 스팸 문장을 3회 연속 도배 시 3번째는 차단
+            var s1 = new org.bukkit.event.player.AsyncPlayerChatEvent(true, p1, "이것은테스트스팸도배문장입니다", java.util.Set.of());
+            var s2 = new org.bukkit.event.player.AsyncPlayerChatEvent(true, p1, "이것은테스트스팸도배문장입니다", java.util.Set.of());
+            var s3 = new org.bukkit.event.player.AsyncPlayerChatEvent(true, p1, "이것은테스트스팸도배문장입니다", java.util.Set.of());
+            listener.onPlayerChat(s1);
+            listener.onPlayerChat(s2);
+            listener.onPlayerChat(s3);
+            assertFalse(s1.isCancelled());
+            assertFalse(s2.isCancelled());
+            assertTrue(s3.isCancelled());
+        }
+    }
 }

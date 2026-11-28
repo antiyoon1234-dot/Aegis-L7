@@ -184,9 +184,11 @@ public final class ConnectionListener implements Listener {
                 // Floodgate로 접속한 유저는 UUID Version이 0이거나 이름 앞에 . 또는 * 이 붙습니다.
                 boolean isBedrock = (event.getUniqueId() != null && event.getUniqueId().version() == 0) || playerName.startsWith(".") || playerName.startsWith("*");
                 if (isBedrock) {
-                    needsVerification = true;
                     verifyReason = "Geyser/Floodgate 비인가 접근";
-                    if (securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.GEYSER_BLOCK) != com.l7defense.module.PenaltyAction.NOTIFY) {
+                    if (securityManager.getModuleManager().getPenalty(com.l7defense.module.DefenseModule.GEYSER_BLOCK) == com.l7defense.module.PenaltyAction.NOTIFY) {
+                        securityManager.handlePreLoginViolation(event, com.l7defense.module.DefenseModule.GEYSER_BLOCK, verifyReason);
+                    } else {
+                        needsVerification = true;
                         securityManager.handlePreLoginViolation(event, com.l7defense.module.DefenseModule.GEYSER_BLOCK, verifyReason);
                         if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) return;
                     }

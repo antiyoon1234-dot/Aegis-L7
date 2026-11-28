@@ -32,14 +32,20 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
     // 허니팟 가짜 엔티티 UUID 추적 (스레드 세이프)
     private final Set<UUID> honeypotEntities = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    // 매크로 감지용 플레이어별 클릭 타임스탬프 (최근 15번)
-    private final Map<UUID, Queue<Long>> clickHistory = new java.util.concurrent.ConcurrentHashMap<>();
+    // 최근 전투에 참여한 플레이어 타임스탬프 (전투 중인 유저에게만 허니팟 배치)
+    private final Map<UUID, Long> lastCombatTime = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // 매크로 감지용 플레이어별 클릭 타임스탬프 (최근 25번)
+    private final Map<UUID, Deque<Long>> clickHistory = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // 매크로 알림 쿨다운 (30초)
+    private final Map<UUID, Long> macroCooldown = new java.util.concurrent.ConcurrentHashMap<>();
 
     public OffensiveDefenseListener(SecurityManager securityManager, Plugin plugin) {
         this.securityManager = securityManager;
         this.plugin = plugin;
 
-        // 5초마다 일부 유저에게 무작위로 투명 허니팟 테스트 진행
+        // 5초마다 전투 중인 일부 유저에게 무작위로 투명 허니팟 테스트 진행
         spawnTask = Bukkit.getScheduler().runTaskTimer(plugin, this::spawnRandomHoneypots, 100L, 100L);
     }
 
@@ -50,10 +56,13 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
     private void spawnRandomHoneypots() {
         if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.HONEYPOT)) return;
 
+        long now = System.currentTimeMillis();
         for (Player p : Bukkit.getOnlinePlayers()) {
             if (p.hasPermission("l7defense.admin") || p.isDead() || !p.isValid()) continue;
-            // 20% 확률로 킬아우라 테스트 (너무 자주 소환하면 서버 부하)
-            if (Math.random() < 0.2) {
+            // 최근 5초 내 전투(엔티티 타격) 기록이 있는 유저만 검사하여 평화로운 채광/건축 유저 방해 방지
+            Long lastCombat = lastCombatTime.get(p.getUniqueId());
+            if (lastCombat == null || now - lastCombat > 5000L) continue;
+            if (Math.random() < 0.25) {
                 spawnHoneypot(p);
             }
         }
@@ -61,22 +70,30 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
 
     private void spawnHoneypot(Player target) {
         if (!target.isOnline() || target.isDead() || target.getWorld() == null) return;
-        // 플레이어 시야 뒤쪽(또는 위쪽)에 보이지 않는 박쥐를 1틱 소환
-        Location loc = target.getLocation().add(0, 3, 0);
+        // 플레이어 등 뒤(시야 정반대 2.5블록 뒤)의 빈 공간에만 소환하여 벽/천장 끼임 및 정상 타격 오탐 방지
+        Vector backDir = target.getLocation().getDirection().setY(0);
+        if (backDir.lengthSquared() < 1e-4) return;
+        backDir.normalize().multiply(-2.5);
+        Location loc = target.getLocation().add(backDir).add(0, 1.5, 0);
+
+        if (!loc.getWorld().isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) return;
+        if (!loc.getBlock().getType().isAir() || !loc.clone().add(0, -1, 0).getBlock().getType().isAir()) return;
 
         target.getWorld().spawn(loc, Bat.class, bat -> {
             bat.setPersistent(false);
             bat.setInvisible(true);
-            bat.setInvulnerable(false); // 맞을 수 있어야 함
+            bat.setInvulnerable(false);
             bat.setSilent(true);
             bat.setAwake(false);
             bat.setGravity(false);
+            bat.setAI(false);
+            bat.setCollidable(false);
             bat.setCustomName("L7_HONEYPOT");
             bat.setCustomNameVisible(false);
 
             honeypotEntities.add(bat.getUniqueId());
 
-            // 1틱(0.05초) 뒤에 바로 삭제 (인간은 절대 반응/클릭 불가능, 킬아우라는 즉시 타격)
+            // 2틱(0.1초) 뒤에 바로 삭제
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 if (bat.isValid()) bat.remove();
                 honeypotEntities.remove(bat.getUniqueId());
@@ -85,14 +102,28 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
     }
 
     @EventHandler
-    public void onEntityDamage(EntityDamageByEntityEvent event) {
-        if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.HONEYPOT)) return;
-
+    public void onAnyEntityDamage(org.bukkit.event.entity.EntityDamageEvent event) {
         if (honeypotEntities.contains(event.getEntity().getUniqueId())) {
-            event.setCancelled(true); // 데미지 무시
-            if (event.getDamager() instanceof Player damager) {
-                // 인간이 0.1초만에 시야에도 없는 투명 박쥐를 때림 -> 100% 킬아우라(Combat Bot)
-                securityManager.handleViolation(damager, DefenseModule.HONEYPOT, "투명 허니팟 타격 (Killaura/CombatBot 감지)");
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onEntityDamage(EntityDamageByEntityEvent event) {
+        if (event.getDamager() instanceof Player damager) {
+            if (honeypotEntities.contains(event.getEntity().getUniqueId())) {
+                event.setCancelled(true);
+                if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.HONEYPOT)) return;
+                // 등 뒤에 있는 허니팟을 실제로 보지 않고 타격했는지 각도 검증 (내적 < 0.25)
+                Vector look = damager.getEyeLocation().getDirection().normalize();
+                Vector toTarget = event.getEntity().getLocation().toVector().subtract(damager.getEyeLocation().toVector());
+                if (toTarget.lengthSquared() > 0.01 && look.dot(toTarget.normalize()) < 0.25) {
+                    securityManager.handleViolation(damager, DefenseModule.HONEYPOT, "등 뒤 투명 허니팟 타격 (Killaura/CombatBot 감지)");
+                }
+                return;
+            }
+            if (!damager.hasPermission("l7defense.admin")) {
+                lastCombatTime.put(damager.getUniqueId(), System.currentTimeMillis());
             }
         }
     }
@@ -101,68 +132,96 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
      * 2. MACRO CHECK (오토클리커 주파수 분석)
      * ----------------------------------------------------- */
 
-    @EventHandler
+    @EventHandler(ignoreCancelled = false)
     public void onInteract(PlayerInteractEvent event) {
         if (securityManager.getModuleManager() == null || !securityManager.getModuleManager().isEnabled(DefenseModule.MACRO_CHECK)) return;
-        if (event.getAction() != Action.LEFT_CLICK_AIR && event.getAction() != Action.LEFT_CLICK_BLOCK) return;
+        if (event.getHand() != org.bukkit.inventory.EquipmentSlot.HAND) return;
+        // LEFT_CLICK_BLOCK은 블록 채굴 홀드 시 틱 단위(50ms)로 반복 발생하므로 공중 클릭(전투/클릭 스팸) 위주로 분석
+        if (event.getAction() != Action.LEFT_CLICK_AIR) return;
 
         Player player = event.getPlayer();
         if (player == null || player.hasPermission("l7defense.admin")) return;
+        if (player.getGameMode() == org.bukkit.GameMode.CREATIVE || player.getGameMode() == org.bukkit.GameMode.SPECTATOR) return;
+
         UUID uuid = player.getUniqueId();
-
-        Queue<Long> clicks = clickHistory.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedQueue<>());
         long now = System.currentTimeMillis();
-        // 3초 이상 지난 오래된 클릭 기록 제거하여 분산 왜곡 방지
-        while (!clicks.isEmpty() && now - clicks.peek() > 3000) {
-            clicks.poll();
-        }
-        clicks.add(now);
+        Long cooldown = macroCooldown.get(uuid);
+        if (cooldown != null && now < cooldown) return;
 
-        if (clicks.size() >= 15) {
-            analyzeMacro(player, new ArrayList<>(clicks));
+        Deque<Long> clicks = clickHistory.computeIfAbsent(uuid, k -> new java.util.concurrent.ConcurrentLinkedDeque<>());
+        synchronized (clicks) {
+            // 2초 이상 지난 클릭 기록 제거
+            while (!clicks.isEmpty() && now - clicks.peekFirst() > 2000L) {
+                clicks.pollFirst();
+            }
+            clicks.addLast(now);
+            while (clicks.size() > 25) {
+                clicks.pollFirst();
+            }
+
+            // 1초 내 24 CPS 초과는 인간 물리 한계 초과 오토클리커로 판정
+            long oneSecAgo = now - 1000L;
+            int recentCps = 0;
+            for (Long ts : clicks) {
+                if (ts >= oneSecAgo) recentCps++;
+            }
+            if (recentCps >= 24) {
+                clicks.clear();
+                macroCooldown.put(uuid, now + 30_000L);
+                securityManager.handleViolation(player, DefenseModule.MACRO_CHECK, "비정상적 초고속 클릭 감지 (" + recentCps + " CPS)");
+                return;
+            }
+
+            if (clicks.size() >= 20) {
+                analyzeMacro(player, new ArrayList<>(clicks), now);
+            }
         }
     }
 
-    private void analyzeMacro(Player player, List<Long> times) {
-        if (times.size() < 15) return;
+    private void analyzeMacro(Player player, List<Long> times, long now) {
+        if (times.size() < 20) return;
 
         List<Long> deltas = new ArrayList<>();
         for (int i = 1; i < times.size(); i++) {
-            deltas.add(times.get(i) - times.get(i - 1));
+            long d = times.get(i) - times.get(i - 1);
+            // 동일 틱 배치 처리(0ms)는 제외
+            if (d > 0) deltas.add(d);
         }
+        if (deltas.size() < 15) return;
 
-        // 평균 클릭 간격 계산
         double sum = 0;
         for (long d : deltas) sum += d;
         double mean = sum / deltas.size();
 
-        // 분산(Variance) 및 표준편차(Standard Deviation) 계산
+        // 마인크래프트 서버는 50ms 틱 경계로 패킷을 처리하므로 정확히 50ms/100ms 배수 근처의 틱 양자화 오탐 방지
+        boolean nearTickMultiple = Math.abs(mean - 50.0) < 6.0 || Math.abs(mean - 100.0) < 6.0;
+        if (nearTickMultiple) return;
+
         double varianceSum = 0;
         for (long d : deltas) {
             varianceSum += Math.pow(d - mean, 2);
         }
-        double variance = varianceSum / deltas.size();
-        double stdDev = Math.sqrt(variance);
+        double stdDev = Math.sqrt(varianceSum / deltas.size());
 
-        // 사람이 마우스를 클릭하면 표준편차가 보통 10~30 이상 발생함.
-        // 표준편차가 3.0 이하라면 정확한 ms 간격으로 클릭하는 기계/매크로/오토클리커임.
-        if (stdDev < 3.0 && mean < 150) { // 클릭 속도도 빠르면서(150ms 미만) 오차가 거의 없는 경우
-            String reason = String.format(Locale.ROOT, "오토클리커/매크로 감지 (표준편차: %.2fms)", stdDev);
-            // 틱 지연으로 입력이 한꺼번에 처리된 경우도 검증하되 즉시 밴하지 않습니다.
-            if (mean < 25) securityManager.challengeHeuristic(player, DefenseModule.MACRO_CHECK, reason);
-            else securityManager.handleViolation(player, DefenseModule.MACRO_CHECK, reason);
-
-            // 기록 초기화 (계속 밴 이벤트 발생하는 것 방지)
+        // 20회 이상 연속 고속 클릭(평균 85ms 미만, 틱 배수 제외)이면서 오차가 극도로 일정한 매크로만 적발
+        if (stdDev < 2.0 && mean < 85.0 && mean > 20.0) {
+            String reason = String.format(Locale.ROOT, "오토클리커/매크로 감지 (평균: %.1fms, 표준편차: %.2fms)", mean, stdDev);
+            macroCooldown.put(player.getUniqueId(), now + 30_000L);
             clicksClear(player.getUniqueId());
+            securityManager.handleViolation(player, DefenseModule.MACRO_CHECK, reason);
         }
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
-        clickHistory.remove(event.getPlayer().getUniqueId());
+        UUID id = event.getPlayer().getUniqueId();
+        clickHistory.remove(id);
+        lastCombatTime.remove(id);
+        macroCooldown.remove(id);
     }
+
     private void clicksClear(UUID id) {
-        Queue<Long> clicks = clickHistory.get(id);
+        Deque<Long> clicks = clickHistory.get(id);
         if (clicks != null) clicks.clear();
     }
 
@@ -174,5 +233,7 @@ public class OffensiveDefenseListener implements Listener, AutoCloseable {
         }
         honeypotEntities.clear();
         clickHistory.clear();
+        lastCombatTime.clear();
+        macroCooldown.clear();
     }
 }

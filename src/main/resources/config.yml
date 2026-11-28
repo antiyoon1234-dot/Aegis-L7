@@ -149,13 +149,13 @@ proxy:
 #   BAN    : IP 블랙리스트 등재 및 차단
 dynamic-modules:
   ping:
-    enabled: true
+    enabled: false
     penalty: NOTIFY
   vpn:
-    enabled: true
+    enabled: false
     penalty: NOTIFY
   entropy:
-    enabled: true
+    enabled: false
     penalty: NOTIFY
   gui_captcha:
     enabled: true
@@ -170,13 +170,13 @@ dynamic-modules:
     enabled: true
     penalty: NOTIFY
   spam:
-    enabled: true
+    enabled: false
     penalty: NOTIFY
   movement:
-    enabled: true
+    enabled: false
     penalty: NOTIFY
   brand:
-    enabled: true
+    enabled: false
     penalty: NOTIFY
   exploit:
     enabled: true

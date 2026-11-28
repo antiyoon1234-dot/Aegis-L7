@@ -18,6 +18,13 @@ import java.util.List;
 
 public class AdminGuiManager implements Listener {
 
+    private static final class AdminGuiHolder implements org.bukkit.inventory.InventoryHolder {
+        private Inventory inventory;
+        @Override
+        public Inventory getInventory() { return inventory; }
+        void setInventory(Inventory inventory) { this.inventory = inventory; }
+    }
+
     private final SecurityManager securityManager;
     private final String GUI_TITLE = "§8[L7] 방어 시스템 관리 패널";
 
@@ -26,9 +33,15 @@ public class AdminGuiManager implements Listener {
     }
 
     public void openGui(Player player) {
-        Inventory inv = Bukkit.createInventory(null, 54, GUI_TITLE);
+        AdminGuiHolder holder = new AdminGuiHolder();
+        Inventory inv = Bukkit.createInventory(holder, 54, GUI_TITLE);
+        holder.setInventory(inv);
+        populateGui(inv);
+        player.openInventory(inv);
+    }
 
-        // 1. 서버 전체 통계 (0번 슬롯)
+    private void populateGui(Inventory inv) {
+        // 1. 서버 전체 통계 (4번 슬롯)
         ItemStack statsItem = new ItemStack(Material.BEACON);
         ItemMeta statsMeta = statsItem.getItemMeta();
         statsMeta.setDisplayName("§b§l[ 서버 보안 통계 ]");
@@ -47,8 +60,6 @@ public class AdminGuiManager implements Listener {
             if (slot >= 54) break;
             inv.setItem(slot++, createModuleItem(module, configManager));
         }
-
-        player.openInventory(inv);
     }
 
     private ItemStack createModuleItem(DefenseModule module, ModuleConfigManager configManager) {
@@ -102,7 +113,7 @@ public class AdminGuiManager implements Listener {
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
-        if (!event.getView().getTitle().equals(GUI_TITLE)) return;
+        if (!(event.getView().getTopInventory().getHolder() instanceof AdminGuiHolder)) return;
 
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
@@ -136,17 +147,13 @@ public class AdminGuiManager implements Listener {
             player.sendMessage("§a[L7] §f" + module.getId() + " §7모듈의 처벌이 §e" + next.name() + " §7(으)로 변경되었습니다.");
         }
 
-        // GUI 리프레시
-        if (securityManager.getSessions() != null) {
-            securityManager.getSessions().submit(player, "admin-gui", () -> openGui(player));
-        } else {
-            openGui(player);
-        }
+        // 인벤토리 닫힘/재오픈 깜빡임 없이 현재 열린 GUI 항목을 즉시 제자리 갱신
+        populateGui(event.getView().getTopInventory());
     }
 
     @EventHandler
     public void onInventoryDrag(org.bukkit.event.inventory.InventoryDragEvent event) {
-        if (event.getView().getTitle().equals(GUI_TITLE)) event.setCancelled(true);
+        if (event.getView().getTopInventory().getHolder() instanceof AdminGuiHolder) event.setCancelled(true);
     }
 
     private PenaltyAction getNextPenalty(PenaltyAction current) {

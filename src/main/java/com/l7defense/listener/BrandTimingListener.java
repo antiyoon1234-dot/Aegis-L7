@@ -39,33 +39,41 @@ public final class BrandTimingListener implements PluginMessageListener, AutoClo
     }
 
     public void recordJoin(Player player) {
-        if (player != null && (enabled || (securityManager.getModuleManager() != null && securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.BRAND)))) {
+        if (player == null) return;
+        boolean isBrandEnabled = securityManager.getModuleManager() != null
+                ? securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.BRAND) : enabled;
+        if (isBrandEnabled) {
             joinTimes.put(player.getUniqueId(), System.currentTimeMillis());
         }
     }
 
     public void recordQuit(Player player) {
-        if (enabled && player != null) {
+        if (player != null) {
             joinTimes.invalidate(player.getUniqueId());
         }
     }
 
     @Override
     public void onPluginMessageReceived(@NotNull String channel, @NotNull Player player, @NotNull byte[] message) {
-        if (!enabled || securityManager.getModuleManager() == null 
-                || !securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.BRAND)
-                || !channel.equals("minecraft:brand")) return;
+        boolean isBrandEnabled = securityManager.getModuleManager() != null
+                ? securityManager.getModuleManager().isEnabled(com.l7defense.module.DefenseModule.BRAND) : enabled;
+        if (!isBrandEnabled || !channel.equals("minecraft:brand")) return;
+        if (player.hasPermission("l7defense.admin")) return;
 
-        Long joinTime = joinTimes.asMap().remove(player.getUniqueId());
-        if (joinTime != null) {
-            long delay = System.currentTimeMillis() - joinTime;
+        joinTimes.invalidate(player.getUniqueId());
 
-            // 15ms 미만의 딜레이는 기계(봇 스크립트)로 간주
-            if (delay < 15L) {
+        // 1.20.2+ Configuration 페이즈에서는 정상 바닐라 클라이언트도 로그인 직후(0~15ms) brand를 전송하므로
+        // 단순 지연 시간으로 오탐하지 않고, 비정상/악성 브랜드 페이로드 형식만 검증합니다.
+        if (message.length == 0 || message.length > 256) {
+            securityManager.challengeHeuristic(player, com.l7defense.module.DefenseModule.BRAND,
+                    "비정상적 Client Brand 페이로드 크기 (" + message.length + " bytes)");
+            return;
+        }
+        for (byte b : message) {
+            if (b == 0) {
                 securityManager.challengeHeuristic(player, com.l7defense.module.DefenseModule.BRAND,
-                        "비정상적 페이로드 타이밍 (Client Brand Spoof)");
-            } else {
-                // 정상 클라이언트: 화이트리스트 점수 부여 또는 안전 통과
+                        "비정상적 Client Brand 페이로드 (Null 바이트 포함)");
+                return;
             }
         }
     }

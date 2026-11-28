@@ -17,7 +17,11 @@ import java.util.logging.Level;
 
 /** 메인 스레드에서 만든 접속 스냅샷과 플레이어별 크기가 제한된 비동기 작업함. */
 public final class PlayerSessions implements Listener, AutoCloseable {
-    public record Snapshot(UUID id, String ip, UUID connectionId) {}
+    public record Snapshot(UUID id, String ip, UUID connectionId, boolean admin) {
+        public Snapshot(UUID id, String ip, UUID connectionId) {
+            this(id, ip, connectionId, false);
+        }
+    }
     private record ActionKey(Snapshot session, String kind) {}
     private record Action(Player player, Runnable task) {}
     private final ConcurrentHashMap<Player, Snapshot> sessions = new ConcurrentHashMap<>();
@@ -39,7 +43,11 @@ public final class PlayerSessions implements Listener, AutoCloseable {
 
     private void register(Player player) {
         if (player == null || closed) return;
-        sessions.put(player, new Snapshot(player.getUniqueId(), IpUtils.getIp(player), UUID.randomUUID()));
+        boolean isAdmin = false;
+        try {
+            isAdmin = player.isOp() || player.hasPermission("l7defense.admin");
+        } catch (Throwable ignored) {}
+        sessions.put(player, new Snapshot(player.getUniqueId(), IpUtils.getIp(player), UUID.randomUUID(), isAdmin));
     }
 
     @EventHandler(priority = EventPriority.LOWEST)

@@ -36,10 +36,12 @@ public final class NameEntropyChecker {
         // 2. 알트 계정 제너레이터(Alt Generator) 사전 조합형 검사 (v1.6)
         if (isAltGeneratorPattern(name)) return true;
 
-        // 3. 섀넌 엔트로피 검사 (문자열의 복잡도/무작위성)
-        // 닉네임은 보통 3.2를 넘지 않지만, 무작위 문자열은 3.5를 넘습니다.
-        double entropy = calculateShannonEntropy(name);
-        if (entropy > 3.4) return true;
+        // 3. 섀넌 엔트로피 검사 (소문자 정규화 후 문자열 복잡도/무작위성 측정)
+        // 대소문자 혼용 정상 닉네임(예: MinecraftPro, PlayerKnight) 오탐을 방지하기 위해 소문자 기준 3.75 초과만 감지
+        if (name.length() >= 8) {
+            double entropy = calculateShannonEntropy(name.toLowerCase(Locale.ROOT));
+            if (entropy > 3.75) return true;
+        }
 
         // 4. 자음 연속 규칙 (연속된 자음이 너무 많으면 키보드 난타/랜덤 문자열)
         if (getMaxConsecutiveConsonants(name) >= 5) return true;

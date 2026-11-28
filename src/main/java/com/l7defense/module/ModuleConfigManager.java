@@ -32,6 +32,7 @@ public class ModuleConfigManager {
 
     public void loadFromConfig() {
         FileConfiguration config = plugin.getConfig();
+        boolean dirty = false;
         for (DefenseModule module : DefenseModule.values()) {
             String path = "dynamic-modules." + module.getId();
 
@@ -39,6 +40,7 @@ public class ModuleConfigManager {
             if (!config.contains(path)) {
                 config.set(path + ".enabled", true);
                 config.set(path + ".penalty", "NOTIFY");
+                dirty = true;
             }
 
             boolean enabled = config.getBoolean(path + ".enabled", true);
@@ -53,7 +55,9 @@ public class ModuleConfigManager {
 
             states.put(module, new ModuleState(enabled, action));
         }
-        plugin.saveConfig();
+        if (dirty) {
+            plugin.saveConfig();
+        }
     }
 
     public boolean isEnabled(DefenseModule module) {

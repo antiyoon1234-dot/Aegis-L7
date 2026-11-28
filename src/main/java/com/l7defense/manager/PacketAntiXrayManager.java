@@ -40,6 +40,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
     private int decoyMinDistance;
     private int decoyMaxDistance;
     private int decoyLifetimeSeconds;
+    private volatile boolean paperEngine2Active;
     private org.bukkit.scheduler.BukkitTask cleanupTask;
 
     public record DecoyEntry(Material fakeOre, long createdAt, long expiresAt) {
@@ -90,7 +91,9 @@ public class PacketAntiXrayManager implements AutoCloseable {
         this.decoyLifetimeSeconds = Math.max(5, decoyLifetimeSeconds);
 
         if (enabled && autoConfigurePaper) {
-            setupPaperEngineMode2();
+            setupPaperEngineMode2(false);
+        } else {
+            this.paperEngine2Active = isPaperEngineMode2Active();
         }
 
         if (plugin != null && Bukkit.getServer() != null) {
@@ -100,16 +103,26 @@ public class PacketAntiXrayManager implements AutoCloseable {
         }
     }
 
+    private static File getServerDir() {
+        File serverDir = Bukkit.getServer() != null ? Bukkit.getWorldContainer() : null;
+        return serverDir != null ? serverDir : new File(".");
+    }
+
     public void setupPaperEngineMode2() {
-        File serverDir = Bukkit.getWorldContainer();
-        if (serverDir == null) serverDir = new File(".");
-        PaperAntiXrayConfigurator.applyEngineMode2(serverDir, logger);
+        setupPaperEngineMode2(true);
+    }
+
+    public void setupPaperEngineMode2(boolean forceReload) {
+        File serverDir = getServerDir();
+        PaperAntiXrayConfigurator.applyEngineMode2(serverDir, logger, forceReload);
+        this.paperEngine2Active = PaperAntiXrayConfigurator.isEngineMode2Enabled(serverDir);
     }
 
     public boolean isPaperEngineMode2Active() {
-        File serverDir = Bukkit.getWorldContainer();
-        if (serverDir == null) serverDir = new File(".");
-        return PaperAntiXrayConfigurator.isEngineMode2Enabled(serverDir);
+        File serverDir = getServerDir();
+        boolean active = PaperAntiXrayConfigurator.isEngineMode2Enabled(serverDir);
+        this.paperEngine2Active = active;
+        return active;
     }
 
     /**
@@ -128,7 +141,8 @@ public class PacketAntiXrayManager implements AutoCloseable {
         Long last = lastScanTime.get(player.getUniqueId());
         if (last == null || now - last >= 1500) {
             lastScanTime.put(player.getUniqueId(), now);
-            if (clientMaskingEnabled) {
+            // Paper Engine-Mode 2가 이미 네이티브 청크 패킷 은닉 중이면 메인 스레드 중복 스캔을 생략해 TPS 보호
+            if (clientMaskingEnabled && !paperEngine2Active) {
                 scanAndMaskHiddenOres(player, brokenBlock.getLocation());
             }
             if (decoysEnabled) {
@@ -150,7 +164,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
         for (BlockFace face : FACES) {
             Block neighbor = brokenBlock.getRelative(face);
             if (neighbor == null) continue;
-            Location nLoc = neighbor.getLocation();
+            Location nLoc = normalizeBlockLocation(neighbor.getLocation());
             if (nLoc == null) continue;
 
             // 마스킹 복구
@@ -170,6 +184,11 @@ public class PacketAntiXrayManager implements AutoCloseable {
                 }
             }
         }
+    }
+
+    private static Location normalizeBlockLocation(Location loc) {
+        if (loc == null || loc.getWorld() == null) return loc;
+        return new Location(loc.getWorld(), loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
     }
 
     /**
@@ -205,11 +224,13 @@ public class PacketAntiXrayManager implements AutoCloseable {
                     int y = cy + dy;
                     int z = cz + dz;
 
+                    if (Bukkit.getServer() != null && !world.isChunkLoaded(x >> 4, z >> 4)) continue;
+
                     Block block = world.getBlockAt(x, y, z);
                     Material mat = block.getType();
 
                     if (AntiXrayListener.RARE_ORES.contains(mat)) {
-                        Location loc = block.getLocation();
+                        Location loc = normalizeBlockLocation(block.getLocation());
                         if (isFullyOccluded(block) && !playerMasked.contains(loc)) {
                             // 완전히 밀폐된 광석이면 돌/심층암/네더랙으로 위장 패킷 전송
                             if (Bukkit.getServer() != null) {
@@ -233,6 +254,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
     public boolean isFullyOccluded(Block block) {
         for (BlockFace face : FACES) {
             Block rel = block.getRelative(face);
+            if (rel == null) return false;
             Material type = rel.getType();
             if (type.isAir() || !type.isOccluding()) {
                 return false;
@@ -256,15 +278,17 @@ public class PacketAntiXrayManager implements AutoCloseable {
      * 유효 시간이 만료된 경우 자동으로 제거하고 원래 블록으로 복원합니다.
      */
     public boolean isDecoy(Player player, Location loc) {
+        if (player == null || loc == null) return false;
+        Location key = normalizeBlockLocation(loc);
         Map<Location, DecoyEntry> decoys = activeDecoys.get(player.getUniqueId());
         if (decoys == null) return false;
-        DecoyEntry entry = decoys.get(loc);
+        DecoyEntry entry = decoys.get(key);
         if (entry == null) return false;
         if (entry.isExpired(System.currentTimeMillis())) {
-            decoys.remove(loc);
+            decoys.remove(key);
             if (Bukkit.getServer() != null) {
                 try {
-                    player.sendBlockChange(loc, loc.getBlock().getBlockData());
+                    player.sendBlockChange(key, key.getBlock().getBlockData());
                 } catch (Throwable ignored) {}
             }
             return false;
@@ -274,15 +298,26 @@ public class PacketAntiXrayManager implements AutoCloseable {
 
     /**
      * 허니팟 패킷을 제거하고 실제 블록 상태를 클라이언트에 전송합니다.
+     * 블록 파괴 취소 직후 클라이언트 고스트 블록 방지를 위해 1틱 뒤 재동기화를 함께 수행합니다.
      */
     public void removeDecoy(Player player, Location loc) {
+        if (player == null || loc == null) return;
+        Location key = normalizeBlockLocation(loc);
         Map<Location, DecoyEntry> decoys = activeDecoys.get(player.getUniqueId());
         if (decoys != null) {
-            decoys.remove(loc);
-            if (Bukkit.getServer() != null) {
+            decoys.remove(key);
+            if (Bukkit.getServer() != null && key.getWorld() != null) {
                 try {
-                    Block block = loc.getBlock();
-                    player.sendBlockChange(loc, block.getBlockData());
+                    Block block = key.getBlock();
+                    BlockData realData = block.getBlockData();
+                    player.sendBlockChange(key, realData);
+                    if (plugin != null && plugin.isEnabled()) {
+                        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                            if (player.isOnline() && key.getWorld().equals(player.getWorld())) {
+                                try { player.sendBlockChange(key, key.getBlock().getBlockData()); } catch (Throwable ignored) {}
+                            }
+                        }, 1L);
+                    }
                 } catch (Throwable ignored) {}
             }
         }
@@ -299,20 +334,23 @@ public class PacketAntiXrayManager implements AutoCloseable {
      * 유효 시간(초)을 지정하여 가짜 광석 허니팟을 주입합니다.
      */
     public void injectDecoy(Player player, Location loc, Material fakeOre, int lifetimeSec) {
+        if (player == null || loc == null || fakeOre == null) return;
+        Location key = normalizeBlockLocation(loc);
         long now = System.currentTimeMillis();
         long expiresAt = now + (lifetimeSec * 1000L);
         Map<Location, DecoyEntry> decoys = activeDecoys.computeIfAbsent(player.getUniqueId(), k -> new ConcurrentHashMap<>());
-        decoys.put(loc, new DecoyEntry(fakeOre, now, expiresAt));
+        decoys.put(key, new DecoyEntry(fakeOre, now, expiresAt));
         if (Bukkit.getServer() != null) {
             try {
-                player.sendBlockChange(loc, fakeOre.createBlockData());
+                player.sendBlockChange(key, fakeOre.createBlockData());
             } catch (Throwable ignored) {}
         }
     }
 
     /**
      * 유저 주변의 밀폐된 암석 속에 가짜 다이아몬드/고대잔해 허니팟 패킷을 자동 주입합니다.
-     * 일반적인 채광자는 볼 수 없으며, 엑스레이(ESP/텍스처팩)를 켠 유저만 투시하여 파고들게 됩니다.
+     * 일반적인 직선 갱도 채광 경로를 피해 상하/측면의 밀폐된 벽 속에만 배치하여
+     * 정상 유저의 우연한 노출을 최소화하고, 엑스레이(ESP/텍스처팩) 유저만 투시하여 파고들도록 유도합니다.
      */
     public void deployAutomaticDecoys(Player player, Location center) {
         if (!enabled || !decoysEnabled || player == null || !player.isOnline()) return;
@@ -347,21 +385,45 @@ public class PacketAntiXrayManager implements AutoCloseable {
         int cy = center.getBlockY();
         int cz = center.getBlockZ();
 
+        // 플레이어의 정면 직진 방향 벡터 계산 (일반 일자 굴착 경로 회피용)
+        Location pLoc = player.getLocation();
+        double lookX = 0, lookZ = 0;
+        boolean hasLook = false;
+        if (pLoc != null && pLoc.getDirection() != null) {
+            org.bukkit.util.Vector dir = pLoc.getDirection().setY(0);
+            if (dir.lengthSquared() > 1e-4) {
+                dir.normalize();
+                lookX = dir.getX();
+                lookZ = dir.getZ();
+                hasLook = true;
+            }
+        }
+
         int needed = maxDecoysPerPlayer - decoys.size();
         int attempts = 0;
         ThreadLocalRandom rng = ThreadLocalRandom.current();
 
-        while (needed > 0 && attempts < 30) {
+        while (needed > 0 && attempts < 36) {
             attempts++;
-            int dx = rng.nextInt(decoyMinDistance, decoyMaxDistance + 1) * (rng.nextBoolean() ? 1 : -1);
-            int dy = rng.nextInt(-3, 4);
-            int dz = rng.nextInt(decoyMinDistance, decoyMaxDistance + 1) * (rng.nextBoolean() ? 1 : -1);
+            double angle = rng.nextDouble(0, Math.PI * 2.0);
+            double dist = rng.nextDouble(decoyMinDistance, decoyMaxDistance + 0.99);
+            int dx = (int) Math.round(Math.cos(angle) * dist);
+            int dz = (int) Math.round(Math.sin(angle) * dist);
+            // 직진 일자 갱도(dy == 0, 1)와 겹치지 않도록 위/아래 오프셋 우선 배치
+            int dy = rng.nextBoolean() ? rng.nextInt(2, 5) : rng.nextInt(-4, -1);
+
+            // 정면 직선 채굴 방향(±25도)이면서 같은 높이인 위치는 정상 채광자 오탐 방지를 위해 회피
+            if (hasLook && Math.abs(dy) <= 1) {
+                double len = Math.hypot(dx, dz);
+                if (len > 0 && ((dx * lookX + dz * lookZ) / len) > 0.9) continue;
+            }
 
             int targetX = cx + dx;
             int targetY = cy + dy;
             int targetZ = cz + dz;
 
             if (targetY < world.getMinHeight() + 2 || targetY > world.getMaxHeight() - 2) continue;
+            if (Bukkit.getServer() != null && !world.isChunkLoaded(targetX >> 4, targetZ >> 4)) continue;
 
             Block candidate = world.getBlockAt(targetX, targetY, targetZ);
             Material type = candidate.getType();
@@ -369,7 +431,7 @@ public class PacketAntiXrayManager implements AutoCloseable {
             if (!isStandardGroundRock(type)) continue;
             if (!isFullyOccluded(candidate)) continue;
 
-            Location candidateLoc = candidate.getLocation();
+            Location candidateLoc = normalizeBlockLocation(candidate.getLocation());
             if (decoys.containsKey(candidateLoc)) continue;
 
             Material fakeOre;

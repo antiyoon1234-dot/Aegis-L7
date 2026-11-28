@@ -139,13 +139,17 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
     }
 
     private void cleanup(Player player) {
+        cleanup(player, true);
+    }
+
+    private void cleanup(Player player, boolean restoreSavedItem) {
         tasks.cancel(player.getUniqueId());
         Challenge challenge = activeCaptchas.remove(player.getUniqueId());
         if (challenge == null) return;
         for (int slot = 0; slot < player.getInventory().getSize(); slot++) {
             if (isCaptchaItem(player.getInventory().getItem(slot), challenge)) player.getInventory().setItem(slot, null);
         }
-        if (challenge.saved != null) {
+        if (restoreSavedItem && challenge.saved != null) {
             ItemStack current = player.getInventory().getItem(0);
             if (current == null || current.getType().isAir()) player.getInventory().setItem(0, challenge.saved);
             else player.getInventory().addItem(challenge.saved).values().forEach(item -> player.getWorld().dropItemNaturally(player.getLocation(), item));
@@ -174,8 +178,13 @@ public final class MapCaptchaListener implements Listener, AutoCloseable {
         Challenge challenge = activeCaptchas.get(e.getEntity().getUniqueId());
         if (challenge == null) return;
         e.getDrops().removeIf(item -> isCaptchaItem(item, challenge));
-        if (!e.getKeepInventory() && challenge.saved != null) e.getDrops().add(challenge.saved.clone());
-        cleanup(e.getEntity());
+        if (!e.getKeepInventory() && challenge.saved != null) {
+            // 인벤토리 유지가 꺼져 있으면 드롭에만 추가하고 인벤토리 복구는 생략하여 아이템 복사(Dupe) 방지
+            e.getDrops().add(challenge.saved.clone());
+            cleanup(e.getEntity(), false);
+        } else {
+            cleanup(e.getEntity(), true);
+        }
     }
     @EventHandler public void onQuit(PlayerQuitEvent e) { cleanup(e.getPlayer()); }
     @EventHandler public void onRespawn(PlayerRespawnEvent e) {

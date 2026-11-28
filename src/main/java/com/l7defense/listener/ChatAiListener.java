@@ -30,16 +30,19 @@ public final class ChatAiListener implements Listener, AutoCloseable {
 
     private final SecurityManager securityManager;
 
-    // 글로벌(서버 전체) 최근 채팅 5개를 보관하여 봇넷 단위의 다중 계정 도배를 감지합니다.
-    private final Cache<Long, String> globalRecentChats;
+    private record GlobalChatEntry(String senderId, String normalizedMsg) {}
+    private record UserChatEntry(String normalizedMsg, int repeatCount) {}
+
+    // 글로벌(서버 전체) 최근 채팅 보관하여 봇넷 단위의 다중 계정 도배를 감지합니다.
+    private final Cache<Long, GlobalChatEntry> globalRecentChats;
 
     // 유저 개인별 최근 채팅 캐시 (짧은 시간 내 연속 채팅 방지)
-    private final Cache<String, String> userRecentChats;
+    private final Cache<String, UserChatEntry> userRecentChats;
     private final java.util.concurrent.atomic.AtomicLong messageId = new java.util.concurrent.atomic.AtomicLong();
 
     public ChatAiListener(SecurityManager securityManager) {
         this.securityManager = securityManager;
-        this.globalRecentChats = Caffeine.newBuilder().expireAfterWrite(30, TimeUnit.SECONDS).maximumSize(20).build();
+        this.globalRecentChats = Caffeine.newBuilder().expireAfterWrite(15, TimeUnit.SECONDS).maximumSize(30).build();
         this.userRecentChats = Caffeine.newBuilder().expireAfterWrite(10, TimeUnit.SECONDS).maximumSize(1000).build();
     }
 
@@ -52,7 +55,7 @@ public final class ChatAiListener implements Listener, AutoCloseable {
         if (player == null || message == null) return;
 
         var session = securityManager.getSessions() != null ? securityManager.getSessions().get(player) : null;
-        if (session == null) return;
+        if (session == null || session.admin()) return;
         String playerId = session.id().toString(); // 개인 도배는 공유 IP가 아닌 플레이어별 집계
         if (message.length() > 256) {
             event.setCancelled(true);
@@ -61,49 +64,54 @@ public final class ChatAiListener implements Listener, AutoCloseable {
         }
 
         // 1. 악성 렌더링 크래시 방어 (RTL / Bidi Override 특수문자 차단)
-        // \u202E, \u202D 등은 마인크래프트 채팅창 렌더링을 터뜨리거나 반전시킵니다.
         if (BIDI_OVERRIDE_PATTERN.matcher(message).find()) {
             event.setCancelled(true);
             securityManager.handleViolation(player, DefenseModule.EXPLOIT_CRASHER, "RTL/Bidi 오버라이드 채팅 크래셔 감지");
             return;
         }
 
-        // 2. 메시지 유사도 (머신러닝) 분석
+        // 2. 메시지 유사도 분석
         String normalizedMsg = normalizeForAnalysis(message);
 
-        // 너무 짧은 채팅은 유사도 분석에서 제외
-        if (normalizedMsg.length() < 5) return;
+        // 짧은 일반 인사/감탄사("안녕하세요", "ㅋㅋㅋㅋㅋ", "감사합니다" 등)는 오탐 방지를 위해 제외
+        if (normalizedMsg.length() < 8) return;
 
-        // 개인 도배 검사 (자기 자신이 똑같은/비슷한 말을 계속 반복하는가?)
-        String lastUserMsg = userRecentChats.getIfPresent(playerId);
-        if (lastUserMsg != null) {
-            double similarity = calculateSimilarity(normalizedMsg, lastUserMsg);
-            if (similarity > 0.85) { // 85% 이상 일치하면 차단
+        // 개인 도배 검사: 10초 내 유사도 88% 이상 문장을 3회 연속(2회 이상 반복) 입력 시 차단
+        UserChatEntry lastUser = userRecentChats.getIfPresent(playerId);
+        int nextRepeatCount = 1;
+        if (lastUser != null) {
+            double similarity = calculateSimilarity(normalizedMsg, lastUser.normalizedMsg());
+            if (similarity > 0.88) {
+                nextRepeatCount = lastUser.repeatCount() + 1;
+                userRecentChats.put(playerId, new UserChatEntry(normalizedMsg, nextRepeatCount));
+                if (nextRepeatCount >= 3) {
+                    event.setCancelled(true);
+                    securityManager.handleViolation(player, DefenseModule.CHAT_AI, "유사도 높은 문장 반복 스팸 (" + Math.round(similarity * 100) + "%)");
+                    return;
+                }
+            }
+        }
+
+        // 글로벌 봇넷 도배 검사: 15초 내 서로 다른 3명 이상의 계정이 10자 이상 유사 문장(85%+)을 동시 도배 시 차단
+        if (normalizedMsg.length() >= 10) {
+            java.util.Set<String> distinctSenders = new java.util.HashSet<>();
+            for (GlobalChatEntry past : globalRecentChats.asMap().values()) {
+                if (past.senderId().equals(playerId)) continue;
+                double similarity = calculateSimilarity(normalizedMsg, past.normalizedMsg());
+                if (similarity > 0.85) {
+                    distinctSenders.add(past.senderId());
+                }
+            }
+            if (distinctSenders.size() >= 3) {
                 event.setCancelled(true);
-                securityManager.handleViolation(player, DefenseModule.CHAT_AI, "유사도 높은 문장 반복 스팸 (" + Math.round(similarity * 100) + "%)");
+                securityManager.handleViolation(player, DefenseModule.CHAT_AI, "글로벌 봇넷 채팅 스팸 패턴 감지");
                 return;
             }
         }
 
-        // 글로벌 봇넷 도배 검사 (서로 다른 봇들이 비슷한 말을 계속 올리는가?)
-        int similarCount = 0;
-        for (String pastMsg : globalRecentChats.asMap().values()) {
-            double similarity = calculateSimilarity(normalizedMsg, pastMsg);
-            if (similarity > 0.80) {
-                similarCount++;
-            }
-        }
-
-        // 3명(번) 이상이 최근 30초 내에 80% 이상 유사한 문장을 썼다면 봇넷 스팸 공격으로 간주
-        if (similarCount >= 2) {
-            event.setCancelled(true);
-            securityManager.handleViolation(player, DefenseModule.CHAT_AI, "글로벌 봇넷 채팅 스팸 패턴 감지");
-            return;
-        }
-
         // 정상 채팅 통과 시 캐시에 기록
-        userRecentChats.put(playerId, normalizedMsg);
-        globalRecentChats.put(messageId.incrementAndGet(), normalizedMsg);
+        userRecentChats.put(playerId, new UserChatEntry(normalizedMsg, nextRepeatCount));
+        globalRecentChats.put(messageId.incrementAndGet(), new GlobalChatEntry(playerId, normalizedMsg));
     }
 
     /**

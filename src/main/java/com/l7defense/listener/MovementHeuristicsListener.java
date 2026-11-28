@@ -24,10 +24,27 @@ public final class MovementHeuristicsListener implements Listener, AutoCloseable
     private final boolean enabled;
     private final com.github.benmanes.caffeine.cache.Cache<java.util.UUID, Integer> evidence =
             com.github.benmanes.caffeine.cache.Caffeine.newBuilder().expireAfterWrite(5, java.util.concurrent.TimeUnit.SECONDS).maximumSize(10_000).build();
+    private final com.github.benmanes.caffeine.cache.Cache<java.util.UUID, Long> graceUntil =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder().expireAfterWrite(10, java.util.concurrent.TimeUnit.SECONDS).maximumSize(10_000).build();
 
     public MovementHeuristicsListener(SecurityManager securityManager, boolean enabled) {
         this.securityManager = securityManager;
         this.enabled = enabled;
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onTeleport(org.bukkit.event.player.PlayerTeleportEvent event) {
+        if (event.getPlayer() != null) {
+            graceUntil.put(event.getPlayer().getUniqueId(), System.currentTimeMillis() + 3000L);
+            evidence.invalidate(event.getPlayer().getUniqueId());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onJoin(org.bukkit.event.player.PlayerJoinEvent event) {
+        if (event.getPlayer() != null) {
+            graceUntil.put(event.getPlayer().getUniqueId(), System.currentTimeMillis() + 3000L);
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -40,6 +57,9 @@ public final class MovementHeuristicsListener implements Listener, AutoCloseable
         if (player == null || player.hasPermission("l7defense.admin")) return;
         if (player.isInsideVehicle() || player.isDead() || player.getGameMode() == GameMode.SPECTATOR) return;
 
+        Long grace = graceUntil.getIfPresent(player.getUniqueId());
+        if (grace != null && System.currentTimeMillis() < grace) return;
+
         Location from = event.getFrom();
         Location to = event.getTo();
         if (from == null || from.getWorld() != to.getWorld() || !Float.isFinite(to.getYaw()) || !Float.isFinite(to.getPitch())) return;
@@ -50,40 +70,42 @@ public final class MovementHeuristicsListener implements Listener, AutoCloseable
             float deltaPitch = Math.abs(to.getPitch() - from.getPitch());
 
             // 휴리스틱 1: 스냅 에임(Snap Aim) 방어
-            // 1틱(0.05초)만에 시점을 180도 이상 정확하게 휙 꺾는 경우 (사람은 불가능에 가까움)
-            if (deltaYaw > 175.0f && deltaYaw < 185.0f && deltaPitch == 0.0f) {
-                flagBot(player, "기계적인 시점 이동 감지 (Snap Aim)");
+            // 1틱(0.05초)만에 Pitch 변동 없이 시점을 정확히 180도 꺾는 경우
+            if (deltaYaw > 175.0f && deltaYaw < 185.0f && deltaPitch == 0.0f && from.getPitch() == to.getPitch()) {
+                flagBot(player, "기계적인 시점 이동 감지 (Snap Aim)", 5);
                 return;
             }
 
-            // 휴리스틱 2: 완벽한 정수 Pitch 고정 (Baritone이나 싸구려 봇의 특징)
-            // 보통 사람의 마우스 센서는 float 소수점 이하 단위로 계속 떨림(Jitter)이 발생함
+            // 휴리스틱 2: 완벽한 0.0 Pitch 고정 상태로 고속 이동+급회전 반복
+            // 주의: 바닐라 클라이언트는 하늘(-90.0f)/바닥(90.0f)을 끝까지 볼 때 Pitch를 정확히 ±90.0f로 클램핑하므로 제외합니다.
             float p = to.getPitch();
-            if ((p == 90.0f || p == -90.0f || p == 0.0f) && deltaYaw > 10.0f) {
-                // 특정 각도로 완벽하게 고정한 상태에서 몸만 회전하는 경우 의심도 증가
-                // 단, 단순 의심이므로 바로 밴하지 않고 SecurityManager 쪽에 로깅하는 것이 안전함.
-                // 여기서는 극단적인 공격 방어용으로 즉시 차단 사용.
-                flagBot(player, "기계적인 시점 이동 감지 (정수 Pitch 고정)");
+            boolean movedHorizontally = from.getX() != to.getX() || from.getZ() != to.getZ();
+            if (p == 0.0f && from.getPitch() == 0.0f && deltaYaw > 25.0f && movedHorizontally) {
+                flagBot(player, "기계적인 시점 이동 감지 (수평 0° Pitch 고정 회전)", 10);
                 return;
             }
         }
     }
 
-    private void flagBot(Player player, String reason) {
+    private void flagBot(Player player, String reason, int requiredCount) {
         int count = evidence.asMap().merge(player.getUniqueId(), 1, Integer::sum);
-        if (count < 3) return;
+        if (count < requiredCount) return;
         evidence.invalidate(player.getUniqueId());
-        // 정상 마우스 이동도 같은 각도를 만들 수 있으므로 반복 신호는 캡챠로 확인합니다.
+        // 정상 마우스 이동도 같은 각도를 만들 수 있으므로 반복 신호는 캡챠/주의로 확인합니다.
         securityManager.challengeHeuristic(player, com.l7defense.module.DefenseModule.MOVEMENT, reason);
     }
     static float yawDifference(float from, float to) {
         return Math.abs((float) Math.IEEEremainder((double) to - from, 360.0));
     }
 
-    @EventHandler public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) { evidence.invalidate(event.getPlayer().getUniqueId()); }
+    @EventHandler public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) {
+        evidence.invalidate(event.getPlayer().getUniqueId());
+        graceUntil.invalidate(event.getPlayer().getUniqueId());
+    }
 
     @Override
     public void close() {
         evidence.invalidateAll();
+        graceUntil.invalidateAll();
     }
 }

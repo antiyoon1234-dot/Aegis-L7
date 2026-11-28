@@ -51,7 +51,7 @@ public final class ResourcePackVerifier implements Listener, AutoCloseable {
         startVerification(event.getPlayer());
     }
 
-    private void startVerification(Player player) {
+    public void startVerification(Player player) {
         if (!enabled) return;
 
 

@@ -56,6 +56,21 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        if (args[0].equalsIgnoreCase("alert")) {
+            if (args.length >= 2 && args[1].equalsIgnoreCase("global")) {
+                boolean enabled = alertManager.toggleGlobalAlert();
+                sender.sendMessage("§a[L7] 전역 공격 경고 알림이 " + (enabled ? "§a활성화" : "§c비활성화") + " §7되었습니다.");
+                return true;
+            }
+            if (!(sender instanceof org.bukkit.entity.Player player)) {
+                sender.sendMessage("§c콘솔에서는 '/l7def alert global'을 사용해주세요.");
+                return true;
+            }
+            boolean enabled = alertManager.togglePlayerAlert(player.getUniqueId());
+            player.sendMessage("§a[L7] 개인 보안 경고 알림 수신이 " + (enabled ? "§a활성화" : "§c비활성화") + " §7되었습니다.");
+            return true;
+        }
+
         if (args[0].equalsIgnoreCase("reload")) {
             boolean reloaded = ((com.l7defense.L7DefensePlugin) plugin).reloadPlugin();
             sender.sendMessage(reloaded ? "§a[L7] 설정을 다시 불러왔습니다." : "§c[L7] 잘못된 설정입니다. 기존 방어를 유지합니다. 콘솔을 확인해주세요.");
@@ -214,7 +229,8 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        return false;
+        sender.sendMessage("§c알 수 없는 명령어입니다. §7(/l7def <gui|status|alert|modules|toggle|penalty|xray|unban|test|reload>)");
+        return true;
     }
 
     @Override
@@ -225,6 +241,7 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
         if (args.length == 1) {
             completions.add("status");
             completions.add("gui");
+            completions.add("alert");
             completions.add("modules");
             completions.add("toggle");
             completions.add("penalty");
@@ -232,6 +249,8 @@ public class L7DefCommand implements CommandExecutor, TabCompleter {
             completions.add("unban");
             completions.add("test");
             completions.add("reload");
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("alert")) {
+            completions.add("global");
         } else if (args.length == 2 && args[0].equalsIgnoreCase("xray")) {
             completions.add("engine2");
             completions.add("decoy");

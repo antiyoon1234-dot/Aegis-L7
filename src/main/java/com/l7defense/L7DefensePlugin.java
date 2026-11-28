@@ -147,6 +147,7 @@ public final class L7DefensePlugin extends JavaPlugin {
         securityManager.setRedisManager(redisManager);
 
         alertManager = new AlertManager(this, securityManager);
+        securityManager.setAlertManager(alertManager);
 
         logger.info("[모듈] GeoIP / VPN 방어: " + (vpnEn || blockForeign ? "활성화" : "비활성화"));
         logger.info("[모듈] Name Entropy Checker: 활성화");
@@ -205,6 +206,7 @@ public final class L7DefensePlugin extends JavaPlugin {
         securityManager.setGuiCaptchaTrigger(guiCaptcha::openCaptcha);
         securityManager.setEntityCaptchaTrigger(entityCaptcha::spawnCaptchaEntity);
         securityManager.setMapCaptchaTrigger(mapCaptcha::triggerMapCaptcha);
+        securityManager.setRpCaptchaTrigger(rpCaptcha::startVerification);
 
         com.l7defense.listener.ExploitCrasherListener crasherListener = new com.l7defense.listener.ExploitCrasherListener(securityManager);
         lifecycles.add(crasherListener);
@@ -248,9 +250,6 @@ public final class L7DefensePlugin extends JavaPlugin {
         antiXrayListener.setPacketAntiXrayManager(packetAntiXray);
         lifecycles.add(antiXrayListener);
         pm.registerEvents(antiXrayListener, this);
-
-        // 패킷 크래셔 페이로드 채널
-        try { getServer().getMessenger().registerIncomingPluginChannel(this, "minecraft:custom_payload", crasherListener); } catch (Exception ignored) {}
 
         // v1.5 플러그인 채널 (Brand Timing)
         com.l7defense.listener.BrandTimingListener brandListener = new com.l7defense.listener.BrandTimingListener(this, securityManager, brandEn);

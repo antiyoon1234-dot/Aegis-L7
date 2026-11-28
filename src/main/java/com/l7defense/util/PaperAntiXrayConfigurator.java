@@ -91,9 +91,21 @@ public class PaperAntiXrayConfigurator {
 
     /**
      * Paper 설정 파일에 Engine-Mode 2(패킷 난수화) 및 광석 은닉 설정을 자동 적용합니다.
+     * 이미 Engine-Mode 2가 활성화된 경우 파일을 불필요하게 덮어쓰지 않습니다.
      */
     public static boolean applyEngineMode2(File serverRootDir, Logger logger) {
+        return applyEngineMode2(serverRootDir, logger, false);
+    }
+
+    public static boolean applyEngineMode2(File serverRootDir, Logger logger, boolean forceReload) {
         try {
+            if (!forceReload && isEngineMode2Enabled(serverRootDir)) {
+                if (logger != null) {
+                    logger.info("[L7-AntiXray] Paper 패킷 난수화(Engine-Mode 2)가 이미 활성화되어 있습니다.");
+                }
+                return true;
+            }
+
             File file = getPaperConfigFile(serverRootDir);
             File parent = file.getParentFile();
             if (parent != null && !parent.exists()) {
@@ -121,14 +133,16 @@ public class PaperAntiXrayConfigurator {
 
             config.save(file);
             if (logger != null) {
-                logger.info("[L7-AntiXray] Paper 패킷 난수화(Engine-Mode 2) 설정이 " + file.getPath() + " 에 성공적으로 적용되었습니다.");
+                logger.info("[L7-AntiXray] Paper 패킷 난수화(Engine-Mode 2) 설정이 " + file.getPath() + " 에 적용되었습니다. (완전 적용을 위해 서버 재시작을 권장합니다)");
             }
 
             // 개별 월드 폴더 내 paper-world.yml 이 있는 경우 함께 갱신
             updateWorldFolders(serverRootDir);
 
-            // Paper 리로드 명령어 시도
-            tryReloadPaper();
+            // 부팅 중 강제 paper reload는 타 플러그인/월드 충돌을 유발할 수 있으므로 명시적 명령 시에만 실행
+            if (forceReload) {
+                tryReloadPaper();
+            }
             return true;
         } catch (IOException e) {
             if (logger != null) {
